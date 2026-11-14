@@ -53,3 +53,18 @@ resource "cloudflare_dns_record" "caa" {
     value = each.value.issuer
   }
 }
+
+# HSTS: browsers refuse plain HTTP for max_age seconds, on every subdomain too. Not preloaded: preload is near-irreversible.
+resource "cloudflare_zone_setting" "security_header" {
+  zone_id    = cloudflare_zone.this.id
+  setting_id = "security_header"
+  value = {
+    strict_transport_security = {
+      enabled            = true
+      max_age            = var.hsts_max_age
+      include_subdomains = true
+      preload            = false
+      nosniff            = true
+    }
+  }
+}

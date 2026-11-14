@@ -18,4 +18,5 @@ module "domain" {
   zone_settings = each.value.zone_settings
   caa_issuers   = each.value.caa_issuers
   proton        = each.value.proton
+  hsts_max_age  = each.value.hsts_max_age
 }

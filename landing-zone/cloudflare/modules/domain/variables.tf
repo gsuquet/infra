@@ -34,3 +34,10 @@ variable "proton" {
   })
   default = null
 }
+
+variable "hsts_max_age" {
+  description = "HSTS max-age in seconds; raise it gradually (1 day, 1 month, 1 year) since browsers cache it"
+  type        = number
+  default     = 31536000
+  nullable    = false
+}

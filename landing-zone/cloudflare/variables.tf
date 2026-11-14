@@ -10,6 +10,7 @@ variable "domains" {
   type = map(object({
     zone_settings = optional(map(string), {})
     caa_issuers   = optional(list(string), ["letsencrypt.org"])
+    hsts_max_age  = optional(number, 31536000)
     proton = optional(object({
       verification = string
       dkim_target  = string
@@ -18,6 +19,7 @@ variable "domains" {
   }))
   default = {
     "gsuquet.com" = {
+      hsts_max_age = 86400 # TODO: raise to 2592000, then 31536000, once a day without HTTPS issues has passed
       proton = {
         verification = "454bd6dc87d5f8902d743764672696a158aff8cf"
         dkim_target  = "dreoysz2xi4pom4tvksmruysugk2khqrsns6in2gqsgq357nzl3ea"
@@ -33,7 +35,7 @@ variable "zero_trust_team_name" {
 }
 
 variable "access_groups" {
-  description = "Access groups keyed by name: member emails, and groups whose members they include (one level). Set in the gitignored private.auto.tfvars"
+  description = "Access groups keyed by name: member emails, and groups whose members they include (one level). Set in the gitignored local.auto.tfvars"
   type = map(object({
     emails   = optional(list(string), [])
     includes = optional(list(string), [])
@@ -82,5 +84,23 @@ variable "state_bucket_location" {
   validation {
     condition     = contains(["apac", "eeur", "enam", "weur", "wnam", "oc"], var.state_bucket_location)
     error_message = "Must be one of apac, eeur, enam, weur, wnam, oc."
+  }
+}
+
+variable "account_name" {
+  description = "Display name of the Cloudflare account"
+  type        = string
+  default     = "gsuquet"
+  nullable    = false
+}
+
+variable "notification_emails" {
+  description = "Recipients of account notifications. Set in the gitignored local.auto.tfvars"
+  type        = list(string)
+  nullable    = false
+
+  validation {
+    condition     = length(var.notification_emails) > 0
+    error_message = "At least one recipient is needed."
   }
 }
