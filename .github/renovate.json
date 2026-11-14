@@ -1,0 +1,93 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "commitBodyTable": true,
+  "configMigration": true,
+  "description": "Renovate config for the infra repo. Every dependency is pinned exactly (versions, commit SHAs with '# frozen: <tag>'). Nothing merges itself: no CI is a required status check yet.",
+  "extends": [
+    "config:best-practices",
+    "helpers:pinGitHubActionDigestsToSemver",
+    ":enablePreCommit",
+    ":gitSignOff",
+    ":rebaseStalePrs",
+    ":semanticCommits",
+    ":semanticCommitScope(deps)"
+  ],
+  "internalChecksFilter": "strict",
+  "labels": [
+    "renovate"
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "* 0-6 * * 1"
+    ]
+  },
+  "minimumReleaseAge": "3 days",
+  "packageRules": [
+    {
+      "dependencyDashboardApproval": true,
+      "description": "Major updates wait for approval on the Dependency Dashboard",
+      "matchUpdateTypes": [
+        "major"
+      ]
+    },
+    {
+      "description": "Dev tools (mise, pre-commit, GitHub Actions): one weekly PR. TODO: automerge once CI is a required status check",
+      "groupName": "dev tools",
+      "groupSlug": "dev-tools",
+      "matchManagers": [
+        "mise",
+        "pre-commit",
+        "github-actions"
+      ],
+      "semanticCommitScope": "tools"
+    },
+    {
+      "description": "Terraform CLI: the mise tool and every required_version move together (exact pins must match)",
+      "groupName": "terraform cli",
+      "groupSlug": "terraform-cli",
+      "matchPackageNames": [
+        "terraform",
+        "hashicorp/terraform"
+      ],
+      "semanticCommitScope": "terraform"
+    },
+    {
+      "description": "Terraform providers: root and child modules pin the same exact version, so one PR updates them all; review the plan before merging",
+      "groupName": "terraform providers",
+      "groupSlug": "terraform-providers",
+      "matchDepTypes": [
+        "provider",
+        "required_provider"
+      ],
+      "matchManagers": [
+        "terraform"
+      ],
+      "semanticCommitScope": "terraform"
+    },
+    {
+      "description": "Lock file maintenance PRs use the lock scope",
+      "matchUpdateTypes": [
+        "lockFileMaintenance"
+      ],
+      "semanticCommitScope": "lock"
+    }
+  ],
+  "prConcurrentLimit": 10,
+  "prHourlyLimit": 4,
+  "rangeStrategy": "pin",
+  "schedule": [
+    "* 0-6 * * 1"
+  ],
+  "timezone": "Europe/Paris",
+  "vulnerabilityAlerts": {
+    "labels": [
+      "renovate",
+      "security"
+    ],
+    "minimumReleaseAge": null,
+    "schedule": [
+      "at any time"
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+[settings]
+lockfile = true
+
+[tools]
+betterleaks = "1.10.1"
+jq = "1.8.2"
+pre-commit = "4.7.0"
+terraform = "1.17.2"
+tflint = "0.66.0"
+tfupdate = "0.10.3"
+trivy = "0.76.1"
+typos = "1.52.2"

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Run terraform in landing-zone/cloudflare with the write token (args are passed through)"
+#MISE dir="{{config_root}}/landing-zone/cloudflare"
+# Terraform with credentials resolved from Proton Pass for this process only (`mise run tf plan`).
+set -euo pipefail
+
+exec pass-cli run --env-file pass/write.env --env-file pass/state.env -- terraform "$@"
