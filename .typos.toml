@@ -1,0 +1,4 @@
+# extend-identifiers matches whole tokens before typos splits them on case changes
+# (ANDed would split into AN + Ded, so extend-words never sees it).
+[default.extend-identifiers]
+ANDed = "ANDed"
