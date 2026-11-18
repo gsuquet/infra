@@ -6,8 +6,10 @@
 #   1. sources/values.yaml, the defaults of the component,
 #   2. components[].values of cluster.yaml, the overrides of the cluster,
 #   3. gitops.cluster and gitops.tenants, injected last so no override can fake them.
-# The output is one file per resource, <kind>-<name>.yaml. Each CRD gets the
-# sync wave -1. rendered/ is deleted first, so a removed component disappears.
+# The output is one file per resource, <kind>-<name>.yaml, or
+# <kind>-<namespace>-<name>.yaml for a resource outside the catalog namespace.
+# Each CRD gets the sync wave -1. rendered/ is deleted first, so a removed
+# component disappears.
 set -euo pipefail
 
 # shellcheck source=SCRIPTDIR/../_lib/gitops.sh
@@ -60,12 +62,16 @@ build_dependencies() {
   built_charts+="$chart"$'\n'
 }
 
-# split_resources <helm output> <output dir>: one file per resource.
+# split_resources <helm output> <output dir> <release namespace>: one file per
+# resource.
 split_resources() {
   local manifest="$1" out="$2" documents duplicates files
+  local -x NAMESPACE="$3"
   # The file name: kind and name in lower case, so it is stable when the chart
-  # moves a resource to another template.
-  local name_expression='(.kind | downcase) + "-" + (.metadata.name | downcase | sub("[^a-z0-9.-]", "-")) + ".yaml"'
+  # moves a resource to another template. A resource in another namespace than
+  # the release one (a Role in kube-system...) gets its namespace too, so the
+  # same kind and name in two namespaces do not collide.
+  local name_expression='(.kind | downcase) + "-" + (if (.metadata.namespace // "") != "" and .metadata.namespace != strenv(NAMESPACE) then (.metadata.namespace | downcase) + "-" else "" end) + (.metadata.name | downcase | sub("[^a-z0-9.-]", "-")) + ".yaml"'
   # CRDs first (wave -1), so Argo CD creates them before the custom resources
   # of the same component. Overrides any wave the chart sets, with a warning.
   local crd_wave='with(select(.kind == "CustomResourceDefinition"); .metadata.annotations["argocd.argoproj.io/sync-wave"] = "-1")'
@@ -97,7 +103,7 @@ render_component() {
   local catalog="$root/components/$component"
   local chart="$catalog/sources"
   local out="$cluster_dir/rendered/$component"
-  local namespace kube_version overrides manifest
+  local namespace kube_version overrides manifest api_versions
 
   if [ ! -f "$catalog/component.yaml" ] || [ ! -f "$chart/Chart.yaml" ]; then
     log_error "$cluster_file: component '$component' needs $catalog/component.yaml and $chart/Chart.yaml"
@@ -105,6 +111,8 @@ render_component() {
   fi
   namespace="$(yq '.namespace' "$catalog/component.yaml")"
   kube_version="$(yq '.kubernetesVersion' "$cluster_file")"
+  # Optional apiVersions of cluster.yaml, comma separated for --api-versions.
+  api_versions="$(yq '.apiVersions // [] | join(",")' "$cluster_file")"
 
   build_dependencies "$chart" || return 1
 
@@ -113,11 +121,17 @@ render_component() {
   COMPONENT="$component" yq '.components[] | select(.name == strenv(COMPONENT)) | .values // {}' "$cluster_file" > "$overrides"
 
   # --kube-version pins .Capabilities.KubeVersion: the output must not depend
-  # on the Helm version's default. --include-crds renders crds/ folders too.
+  # on the Helm version's default. --api-versions adds the cluster's
+  # apiVersions to .Capabilities.APIVersions, so templates gated on a CRD
+  # (ServiceMonitor, HTTPRoute...) render. --include-crds renders crds/
+  # folders too. --skip-tests leaves out `helm test` hooks: Argo CD would
+  # apply them as plain Pods.
   if ! helm template "$component" "$chart" \
     --namespace "$namespace" \
     --kube-version "$kube_version" \
+    ${api_versions:+--api-versions "$api_versions"} \
     --include-crds \
+    --skip-tests \
     --values "$overrides" \
     --values "$gitops_values" > "$manifest"; then
     log_error "$cluster_file: helm template failed for '$component'"
@@ -127,7 +141,7 @@ render_component() {
   # its "# Source:" comment, and the comment would land in a file of its own.
   awk 'prev ~ /^# Source: / && $0 ~ /^---[[:space:]]*$/ { prev = $0; next } { print; prev = $0 }' \
     "$manifest" > "$manifest.clean"
-  split_resources "$manifest.clean" "$out"
+  split_resources "$manifest.clean" "$out" "$namespace"
 }
 
 # gitops_values <root> <cluster.yaml> <output file>: the values every component

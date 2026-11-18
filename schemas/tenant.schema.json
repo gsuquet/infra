@@ -57,13 +57,19 @@
       "type": "object"
     },
     "name": {
-      "description": "Tenant name. Must be equal to the file name. It is also the AppProject name and the folder tenants/<tenant>/ in the gitops repo.",
+      "description": "Tenant name. Must be equal to the file name. It is also the AppProject name and the folder tenants/<tenant>/ in the gitops repo. The platform AppProject names (platform_projects in policy/data/gitops.yaml) are reserved: the tenant policies skip those projects.",
       "maxLength": 30,
+      "not": {
+        "enum": [
+          "default",
+          "platform"
+        ]
+      },
       "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
       "type": "string"
     },
     "namespaces": {
-      "description": "Namespaces of the tenant, the only destinations of its AppProject. schemas:check fails if a namespace is not the tenant name or does not start with <tenant>-.",
+      "description": "Namespaces of the tenant, the only destinations of its AppProject. schemas:check fails if a namespace is not the tenant name or does not start with <tenant>-, starts with kube-, or is the namespace of a catalog component.",
       "items": {
         "maxLength": 63,
         "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",

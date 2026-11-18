@@ -23,4 +23,12 @@ component(path) := name if {
 	name := matches[0][1]
 }
 
+# cluster(path): the cluster folder, <root>/clusters/<cluster>, that holds
+# rendered/. It is the key of data.clusters (policy:check generates it).
+# Undefined for a file outside rendered/.
+cluster(path) := dir if {
+	matches := regex.find_all_string_submatch_n(`^(.*)/rendered/[^/]+/`, path, 1)
+	dir := matches[0][1]
+}
+
 labels(obj) := object.get(obj, ["metadata", "labels"], {})

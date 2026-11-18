@@ -21,9 +21,14 @@ gitops:
 
   tenants:
     # AppProjects of the platform. Every other AppProject is a tenant one.
+    # schemas/tenant.schema.json reserves these names: keep both in sync.
     platform_projects:
       - default
       - platform
+    # The only cluster a tenant deploys to: the one Argo CD runs in.
+    destination:
+      server: https://kubernetes.default.svc
+      name: in-cluster
     # The only repository a tenant can deploy from.
     source_repos:
       - https://github.com/gsuquet/gitops.git

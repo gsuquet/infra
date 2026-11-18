@@ -1,18 +1,54 @@
 # Tenant AppProjects: every AppProject that is not a platform one.
-# A tenant deploys only from the gitops repo, into its own namespaces, with no
-# cluster-scoped resource and no network policy of its own.
+# A tenant deploys only from the gitops repo, into its own namespaces on its
+# own cluster, with no cluster-scoped resource and no network policy of its
+# own. tenants/<tenant>.yaml is the source of its namespaces: policy:check
+# passes them as data.clusters.
 package tenants
 
 import data.common.manifests
 import data.gitops.tenants as tenants
 
-# A helper rule: in the body of deny, OPA would evaluate the undefined
+# Helper rules: in the body of deny, OPA would evaluate the undefined
 # reference before the negation, and the rule would never fire.
 data_loaded if is_object(tenants)
+
+clusters_loaded if is_object(data.clusters)
 
 deny contains msg if {
 	not data_loaded
 	msg := "data.gitops.tenants is missing: run conftest with --data policy/data"
+}
+
+deny contains msg if {
+	not clusters_loaded
+	msg := "data.clusters is missing: run 'mise run policy:check', which generates it from the cluster.yaml files"
+}
+
+# tenant_namespaces(path, project): the namespaces of the tenant in its
+# gitops/tenants/<tenant>.yaml, when the cluster that rendered path lists it.
+tenant_namespaces(path, project) := data.clusters[manifests.cluster(path)].tenants[project]
+
+# platform_namespace(path, namespace): the namespace of a component enabled
+# on the same cluster.
+platform_namespace(path, namespace) if {
+	some component_namespace in data.clusters[manifests.cluster(path)].components
+	component_namespace == namespace
+}
+
+onboarded(path, project) if tenant_namespaces(path, project)
+
+allowed_namespace(path, project, namespace) if {
+	namespace in tenant_namespaces(path, project)
+	not platform_namespace(path, namespace)
+}
+
+# allowed_cluster(destination): the cluster Argo CD runs in. A destination
+# sets server, name, or both, and each one it sets must match.
+allowed_cluster(destination) if {
+	some key in ["server", "name"]
+	destination[key]
+	object.get(destination, "server", tenants.destination.server) == tenants.destination.server
+	object.get(destination, "name", tenants.destination.name) == tenants.destination.name
 }
 
 tenant_projects contains [path, obj] if {
@@ -52,8 +88,26 @@ deny contains msg if {
 }
 
 deny contains msg if {
+	clusters_loaded
+	some [path, obj] in tenant_projects
+	not onboarded(path, obj.metadata.name)
+	msg := sprintf("%s: the AppProject %q is not a tenant of %s: add it to the tenants of its cluster.yaml, or to the platform projects of policy/data/gitops.yaml", [path, obj.metadata.name, manifests.cluster(path)])
+}
+
+# Destinations: only the tenant's own namespaces (no wildcard, no platform
+# namespace), only on the cluster Argo CD runs in.
+deny contains msg if {
+	some [path, obj] in tenant_projects
+	onboarded(path, obj.metadata.name)
+	some destination in object.get(obj, ["spec", "destinations"], [])
+	namespace := object.get(destination, "namespace", "")
+	not allowed_namespace(path, obj.metadata.name, namespace)
+	msg := sprintf("%s: the tenant AppProject %q must not deploy to the namespace %q: allowed are the namespaces of its tenant file, %v", [path, obj.metadata.name, namespace, tenant_namespaces(path, obj.metadata.name)])
+}
+
+deny contains msg if {
 	some [path, obj] in tenant_projects
 	some destination in object.get(obj, ["spec", "destinations"], [])
-	contains(object.get(destination, "namespace", "*"), "*")
-	msg := sprintf("%s: the tenant AppProject %q must list its namespaces in spec.destinations, without a wildcard", [path, obj.metadata.name])
+	not allowed_cluster(destination)
+	msg := sprintf("%s: the tenant AppProject %q must deploy to its own cluster only: server %q or name %q, got %v", [path, obj.metadata.name, tenants.destination.server, tenants.destination.name, destination])
 }

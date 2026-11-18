@@ -32,6 +32,15 @@
       "const": "infra.gsuquet.com/v1alpha1",
       "description": "Version of this schema."
     },
+    "apiVersions": {
+      "description": "API versions the cluster serves on top of the built-in ones, for example monitoring.coreos.com/v1 or gateway.networking.k8s.io/v1/HTTPRoute. manifests:render passes them to helm template (--api-versions), so templates gated on .Capabilities.APIVersions render.",
+      "items": {
+        "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?/)?v[0-9]+((alpha|beta)[0-9]+)?(/[A-Z][A-Za-z0-9]*)?$",
+        "type": "string"
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
     "components": {
       "description": "Catalog components (gitops/components/<name>/) enabled on the cluster. manifests:render renders each one to rendered/<name>/.",
       "items": {

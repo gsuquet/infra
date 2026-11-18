@@ -38,6 +38,13 @@ jsonschema metaschema schemas/*.schema.json > /dev/null || fail "schemas/ has in
 jsonschema lint --exclude description_trailing_period --exclude top_level_examples \
   schemas/*.schema.json || fail "jsonschema lint failed"
 
+# The tenant policies skip the platform AppProjects: no tenant may take one
+# of their names.
+reserved="$(yq -o=json -I=0 '.properties.name.not.enum | sort' schemas/tenant.schema.json)"
+platform="$(yq -o=json -I=0 '.gitops.tenants.platform_projects | sort' policy/data/gitops.yaml)"
+[ "$reserved" = "$platform" ] \
+  || fail "schemas/tenant.schema.json reserves the tenant names $reserved, policy/data/gitops.yaml has the platform projects $platform: keep them equal"
+
 log_info "Running the schema tests"
 for schema in cluster component tenant; do
   [ -d "schemas/tests/$schema/valid" ] && validate "$schema" "schemas/tests/$schema/valid"
@@ -53,7 +60,10 @@ done
 # check_root <root>: the instance files of one GitOps root.
 check_root() {
   local root="$1" file dir name component target tenant namespace
-  local catalog="$root/components"
+  local catalog="$root/components" platform_namespaces
+  # Namespaces of the catalog components, one per line: a tenant must not
+  # take one, its AppProject would deploy into the platform.
+  platform_namespaces="$(for file in "$catalog"/*/component.yaml; do [ -f "$file" ] && yq '.namespace' "$file"; done)"
 
   # Catalog components.
   for file in "$catalog"/*/component.yaml; do
@@ -77,9 +87,12 @@ check_root() {
     [ "$name" = "$(basename "$file" .yaml)" ] || fail "$file: name '$name' must be the file name '$(basename "$file" .yaml)'"
     while IFS= read -r namespace; do
       case "$namespace" in
+        kube-*) fail "$file: namespace '$namespace' is reserved by Kubernetes (kube-*)" ;;
         "$name" | "$name"-*) ;;
         *) fail "$file: namespace '$namespace' must be '$name' or start with '$name-'" ;;
       esac
+      grep -qxF -- "$namespace" <<< "$platform_namespaces" \
+        && fail "$file: namespace '$namespace' is the namespace of a catalog component"
     done < <(yq '.namespaces[]' "$file")
   done
 

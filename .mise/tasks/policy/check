@@ -6,10 +6,37 @@ set -euo pipefail
 # shellcheck source=SCRIPTDIR/../_lib/gitops.sh
 source .mise/tasks/_lib/gitops.sh
 
-require conftest
+require conftest yq
 
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+# data.clusters, keyed by cluster folder (<root>/clusters/<cluster>): the
+# catalog namespace of each enabled component and the namespaces of each
+# tenant. The policies need what cluster.yaml, the catalog and the tenant
+# files say, not only what the charts render.
+clusters="$work/clusters.yaml"
+echo 'clusters: {}' > "$clusters"
 files=()
 while IFS= read -r -u 3 root; do
+  while IFS= read -r -u 4 cluster_file; do
+    export CLUSTER="${cluster_file%/cluster.yaml}"
+    yq -i '.clusters[strenv(CLUSTER)] = {"components": {}, "tenants": {}}' "$clusters"
+    while IFS= read -r component; do
+      [ -n "$component" ] || continue
+      export COMPONENT="$component" CATALOG="$root/components/$component/component.yaml"
+      # schemas:check reports a component missing from the catalog.
+      [ -f "$CATALOG" ] || continue
+      yq -i '.clusters[strenv(CLUSTER)].components[strenv(COMPONENT)] = (load(strenv(CATALOG)) | .namespace)' "$clusters"
+    done < <(yq '.components[].name' "$cluster_file")
+    while IFS= read -r tenant; do
+      [ -n "$tenant" ] || continue
+      export TENANT="$tenant" TENANT_FILE="$root/tenants/$tenant.yaml"
+      [ -f "$TENANT_FILE" ] || continue
+      yq -i '.clusters[strenv(CLUSTER)].tenants[strenv(TENANT)] = (load(strenv(TENANT_FILE)) | .namespaces)' "$clusters"
+    done < <(yq '.tenants[]' "$cluster_file")
+  done 4< <(cluster_files "$root")
+
   while IFS= read -r file; do
     files+=("$file")
   done < <(rendered_files "$root")
@@ -24,4 +51,4 @@ fi
 # tells which cluster and component a resource comes from.
 log_info "Checking ${#files[@]} rendered file(s)"
 conftest test --no-color --combine --all-namespaces \
-  --policy policy --data policy/data "${files[@]}"
+  --policy policy --data policy/data --data "$clusters" "${files[@]}"

@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 #MISE description="Validate the rendered manifests of each cluster with kubeconform, custom resources included"
 #MISE dir="{{config_root}}"
-# Each cluster validates against:
-#   - the Kubernetes schemas of its kubernetesVersion (cluster.yaml),
-#   - JSON schemas built from the CRDs in its own rendered/ folder.
-# A resource without a schema fails: a custom resource needs its CRD rendered
-# on the same cluster. -strict rejects unknown fields.
+# Each cluster validates against, first match wins:
+#   - the Kubernetes schemas of its kubernetesVersion (cluster.yaml), from
+#     KUBERNETES_SCHEMA_LOCATION (default: kubeconform's built-in location,
+#     the master branch of yannh/kubernetes-json-schema),
+#   - JSON schemas built from the CRDs in its own rendered/ folder,
+#   - committed JSON schemas in schemas/crds/<group>/<kind>_<version>.json,
+#     for CRDs an operator installs at runtime instead of its chart (Cilium
+#     creates CiliumNetworkPolicy and CiliumClusterwideNetworkPolicy itself).
+# A resource without a schema fails. -strict rejects unknown fields.
 # CustomResourceDefinitions themselves are skipped: the Kubernetes schemas
 # kubeconform downloads (yannh/kubernetes-json-schema) have none. Their
 # openAPIV3Schema is still compiled below for the custom resources.
@@ -45,6 +49,11 @@ crd_schemas() {
   done < <(grep -rlE '^kind: CustomResourceDefinition$' "$rendered" | LC_ALL=C sort)
 }
 
+# TODO(owner): pin to a commit of yannh/kubernetes-json-schema, e.g.
+# https://raw.githubusercontent.com/yannh/kubernetes-json-schema/<sha>/{{.NormalizedKubernetesVersion}}-standalone{{.StrictSuffix}}/{{.ResourceKind}}{{.KindSuffix}}.json
+# "default" follows the master branch at run time.
+schema_location="${KUBERNETES_SCHEMA_LOCATION:-default}"
+
 failures=0
 clusters=0
 while IFS= read -r -u 3 root; do
@@ -64,8 +73,9 @@ while IFS= read -r -u 3 root; do
     # {{ }} are kubeconform template variables, not shell.
     if ! kubeconform -strict -summary -skip CustomResourceDefinition \
       -kubernetes-version "$(yq '.kubernetesVersion' "$cluster_file")" \
-      -schema-location default \
+      -schema-location "$schema_location" \
       -schema-location "$schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
+      -schema-location "schemas/crds/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
       "$rendered"; then
       failures=$((failures + 1))
     fi

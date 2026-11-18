@@ -11,8 +11,12 @@ require git
 mise run manifests:render
 
 # Untracked files count too: a new component has no committed output yet.
+# Ignored ones as well (!! lines): .gitignore re-includes rendered/, but a
+# future rule must not hide a component from this check.
 rendered=(':(glob)**/clusters/*/rendered/**')
-changes="$(git status --porcelain --untracked-files=all -- "${rendered[@]}")"
+# git lists ignored folders (.terraform/...) whatever the pathspec: keep the
+# paths under rendered/ only.
+changes="$(git status --porcelain --untracked-files=all --ignored=matching -- "${rendered[@]}" | grep -E '^.. (.*/)?clusters/[^/]+/rendered/' || true)"
 if [ -n "$changes" ]; then
   log_error "The rendered manifests are out of date. Run 'mise run manifests:render' and commit the result."
   printf '%s\n' "$changes" >&2
