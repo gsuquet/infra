@@ -1,0 +1,84 @@
+{
+  "$defs": {
+    "component": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name",
+          "description": "Folder name of the component in gitops/components/."
+        },
+        "values": {
+          "description": "Helm values for this cluster. They override the default values of the component (sources/values.yaml).",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": {
+      "maxLength": 53,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "type": "string"
+    }
+  },
+  "$id": "https://github.com/gsuquet/infra/schemas/cluster.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "gitops/clusters/<cluster>/cluster.yaml: the target of the cluster, the catalog components it enables with their value overrides, and the tenants it hosts.",
+  "properties": {
+    "apiVersion": {
+      "const": "infra.gsuquet.com/v1alpha1",
+      "description": "Version of this schema."
+    },
+    "components": {
+      "description": "Catalog components (gitops/components/<name>/) enabled on the cluster. manifests:render renders each one to rendered/<name>/.",
+      "items": {
+        "$ref": "#/$defs/component"
+      },
+      "type": "array"
+    },
+    "kind": {
+      "const": "Cluster"
+    },
+    "kubernetesVersion": {
+      "description": "Kubernetes version of the cluster, without the v prefix. helm template renders with it (--kube-version) and kubeconform validates against it.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "type": "string"
+    },
+    "name": {
+      "description": "Cluster name. Must be equal to the folder name, and to the Terraform root in clusters/<name>/.",
+      "maxLength": 40,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "type": "string"
+    },
+    "target": {
+      "description": "Where the cluster runs. A catalog component lists the targets it supports (GKE has Dataplane V2, so it skips cilium).",
+      "enum": [
+        "kind",
+        "talos",
+        "gke"
+      ]
+    },
+    "tenants": {
+      "description": "Tenants (gitops/tenants/<name>.yaml) onboarded on the cluster. The render passes them to every component as gitops.tenants.",
+      "items": {
+        "$ref": "#/$defs/name"
+      },
+      "type": "array",
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "name",
+    "target",
+    "kubernetesVersion",
+    "components",
+    "tenants"
+  ],
+  "title": "GitOps cluster",
+  "type": "object"
+}

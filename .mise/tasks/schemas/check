@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+#MISE description="Check the JSON schemas, their tests, and every cluster, component and tenant file"
+#MISE dir="{{config_root}}"
+# 1. The schemas in schemas/ are valid JSON Schema and pass the linter.
+# 2. schemas/tests/<schema>/valid/ passes and schemas/tests/<schema>/invalid/
+#    fails, file by file.
+# 3. In each GitOps root: every cluster.yaml, component.yaml and tenant file
+#    matches its schema, then the rules a schema cannot express (names,
+#    references between files, targets, baseline components).
+set -euo pipefail
+
+# shellcheck source=SCRIPTDIR/../_lib/gitops.sh
+source .mise/tasks/_lib/gitops.sh
+
+require jsonschema yq
+
+failures=0
+fail() {
+  log_error "$*"
+  failures=$((failures + 1))
+}
+
+# validate <schema> <file or dir...>: quiet on success.
+validate() {
+  local schema="$1" output
+  shift
+  output="$(jsonschema validate --continue "schemas/$schema.schema.json" "$@" 2>&1)" || {
+    printf '%s\n' "$output" >&2
+    fail "files do not match schemas/$schema.schema.json"
+    return 1
+  }
+}
+
+log_info "Checking the schemas"
+jsonschema metaschema schemas/*.schema.json > /dev/null || fail "schemas/ has invalid JSON schemas"
+# Excluded rules: descriptions here are full sentences, and schemas/tests/
+# holds the examples.
+jsonschema lint --exclude description_trailing_period --exclude top_level_examples \
+  schemas/*.schema.json || fail "jsonschema lint failed"
+
+log_info "Running the schema tests"
+for schema in cluster component tenant; do
+  [ -d "schemas/tests/$schema/valid" ] && validate "$schema" "schemas/tests/$schema/valid"
+  if [ -d "schemas/tests/$schema/invalid" ]; then
+    # --invalid: each file must fail on its own.
+    output="$(jsonschema validate --continue --invalid "schemas/$schema.schema.json" "schemas/tests/$schema/invalid" 2>&1)" || {
+      printf '%s\n' "$output" >&2
+      fail "schemas/tests/$schema/invalid/ has files that the schema accepts"
+    }
+  fi
+done
+
+# check_root <root>: the instance files of one GitOps root.
+check_root() {
+  local root="$1" file dir name component target tenant namespace
+  local catalog="$root/components"
+
+  # Catalog components.
+  for file in "$catalog"/*/component.yaml; do
+    [ -f "$file" ] || continue
+    dir="$(dirname "$file")"
+    validate component "$file" || continue
+    name="$(yq '.name' "$file")"
+    [ "$name" = "$(basename "$dir")" ] || fail "$file: name '$name' must be the folder name '$(basename "$dir")'"
+    [ -f "$dir/sources/Chart.yaml" ] || fail "$file: the Helm source $dir/sources/Chart.yaml is missing"
+  done
+  for dir in "$catalog"/*/; do
+    [ -d "$dir" ] || continue
+    [ -f "$dir/component.yaml" ] || fail "${dir%/}: a catalog component needs a component.yaml"
+  done
+
+  # Tenants.
+  for file in "$root"/tenants/*.yaml; do
+    [ -f "$file" ] || continue
+    validate tenant "$file" || continue
+    name="$(yq '.name' "$file")"
+    [ "$name" = "$(basename "$file" .yaml)" ] || fail "$file: name '$name' must be the file name '$(basename "$file" .yaml)'"
+    while IFS= read -r namespace; do
+      case "$namespace" in
+        "$name" | "$name"-*) ;;
+        *) fail "$file: namespace '$namespace' must be '$name' or start with '$name-'" ;;
+      esac
+    done < <(yq '.namespaces[]' "$file")
+  done
+
+  # Clusters.
+  while IFS= read -r file; do
+    dir="$(dirname "$file")"
+    validate cluster "$file" || continue
+    name="$(yq '.name' "$file")"
+    target="$(yq '.target' "$file")"
+    [ "$name" = "$(basename "$dir")" ] || fail "$file: name '$name' must be the folder name '$(basename "$dir")'"
+
+    while IFS= read -r component; do
+      [ -n "$component" ] && fail "$file: component '$component' is listed more than once"
+    done < <(yq '[.components[].name] | group_by(.) | map(select(length > 1) | .[0]) | .[]' "$file")
+
+    while IFS= read -r component; do
+      [ -n "$component" ] || continue
+      if [ ! -f "$catalog/$component/component.yaml" ]; then
+        fail "$file: component '$component' is not in the catalog ($catalog/$component/component.yaml)"
+        continue
+      fi
+      TARGET="$target" yq -e '.targets | any_c(. == strenv(TARGET))' "$catalog/$component/component.yaml" > /dev/null 2>&1 \
+        || fail "$file: component '$component' does not support the target '$target' (see its targets)"
+    done < <(yq '.components[].name' "$file")
+
+    # Baseline: every catalog component with baseline: true that supports the
+    # target must be enabled.
+    for component in "$catalog"/*/component.yaml; do
+      [ -f "$component" ] || continue
+      TARGET="$target" yq -e '.baseline and (.targets | any_c(. == strenv(TARGET)))' "$component" > /dev/null 2>&1 || continue
+      COMPONENT="$(yq '.name' "$component")" yq -e '.components | any_c(.name == strenv(COMPONENT))' "$file" > /dev/null 2>&1 \
+        || fail "$file: the baseline component '$(yq '.name' "$component")' is missing"
+    done
+
+    while IFS= read -r tenant; do
+      [ -n "$tenant" ] || continue
+      [ -f "$root/tenants/$tenant.yaml" ] || fail "$file: tenant '$tenant' has no $root/tenants/$tenant.yaml"
+    done < <(yq '.tenants[]' "$file")
+  done < <(cluster_files "$root")
+}
+
+while IFS= read -r -u 3 root; do
+  log_info "Checking $root"
+  check_root "$root"
+done 3< <(gitops_roots)
+
+if [ "$failures" -gt 0 ]; then
+  log_error "$failures problem(s) found"
+  exit 1
+fi
+log_info "All schemas and GitOps files are valid"

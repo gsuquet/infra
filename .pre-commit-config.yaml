@@ -40,7 +40,14 @@ repos:
     rev: cba56bcde1fdd01c1deb3f945e69764c291a6530  # frozen: v1.38.0
     hooks:
       - id: yamllint
-        exclude: '/sources/templates/'
+        # Helm templates are not YAML until rendered. Rendered manifests are
+        # generated (manifests:check, kubeconform and conftest cover them).
+        exclude: |
+          (?x)(
+            /sources/templates/|
+            ^testdata/charts/[^/]+/templates/|
+            /rendered/
+          )
 
   - repo: https://github.com/renovatebot/pre-commit-hooks
     rev: 6f9f6fb27042eeb2c12163c94cf22289e9710eda  # frozen: 44.239.1

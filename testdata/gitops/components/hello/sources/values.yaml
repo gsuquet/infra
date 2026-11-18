@@ -1,0 +1,6 @@
+---
+# Default values of the component, for every cluster. cluster.yaml overrides
+# them. manifests:render adds gitops.cluster and gitops.tenants, which only the
+# templates of this umbrella chart read (templates/configmap.yaml).
+hello:
+  greeting: Hello

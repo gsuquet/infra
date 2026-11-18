@@ -1,0 +1,36 @@
+---
+# Data of the GitOps policies. `conftest --data policy/data` loads this file
+# and the policies read it as data.gitops. Change a rule here, not in Rego.
+gitops:
+  # The CiliumClusterwideNetworkPolicy default-deny selects the namespaces
+  # with this label. Every rendered Namespace must carry it.
+  network_policy_label:
+    key: network.infra.gsuquet.com/policy
+    value: default-deny
+  # Namespaces the default-deny excludes, so they do not need the label.
+  network_policy_exempt_namespaces:
+    - kube-system
+
+  # Only this component may render the Gateway API CRDs: implementations
+  # (Cilium, Envoy Gateway...) are installed without their bundled copy.
+  gateway_api:
+    component: gateway-api-crds
+    groups:
+      - gateway.networking.k8s.io
+      - gateway.networking.x-k8s.io
+
+  tenants:
+    # AppProjects of the platform. Every other AppProject is a tenant one.
+    platform_projects:
+      - default
+      - platform
+    # The only repository a tenant can deploy from.
+    source_repos:
+      - https://github.com/gsuquet/gitops.git
+      - https://github.com/gsuquet/gitops
+    # Kinds a tenant must not manage: the cluster layer owns network policy.
+    namespace_resource_blacklist:
+      - group: networking.k8s.io
+        kind: NetworkPolicy
+      - group: cilium.io
+        kind: CiliumNetworkPolicy

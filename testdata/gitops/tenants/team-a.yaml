@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=../../../schemas/tenant.schema.json
+---
+apiVersion: infra.gsuquet.com/v1alpha1
+kind: Tenant
+name: team-a
+description: Test fixture tenant.
+namespaces:
+  - team-a
+quota:
+  requests:
+    cpu: "1"
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+  pods: 10
+limits:
+  defaultRequest:
+    cpu: 50m
+    memory: 64Mi
+  default:
+    cpu: 200m
+    memory: 256Mi

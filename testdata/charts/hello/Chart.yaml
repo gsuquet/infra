@@ -1,0 +1,9 @@
+---
+# A tiny chart that stands in for an upstream chart: a CRD in crds/ and a
+# custom resource of that CRD.
+apiVersion: v2
+name: hello
+description: Test fixture of the GitOps tooling. Not a real component.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
