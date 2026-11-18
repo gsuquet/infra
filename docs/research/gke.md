@@ -2,18 +2,25 @@
 
 Status: study, nothing implemented. Sources checked on 2026-11-18 against `cloud.google.com`,
 `docs.cloud.google.com`, `registry.terraform.io` (google provider 8.12.0 docs), `cert-manager.io`,
-`external-secrets.io` and `docs.cilium.io`. Anything marked **(unverified)** was not confirmed on those pages.
+`external-secrets.io`, `docs.cilium.io`, `docs.github.com` and the cert-manager and ESO chart `values.yaml` on
+`raw.githubusercontent.com`. Anything marked **(unverified)** was not confirmed on those pages.
 
 ## TL;DR
 
-- **Recommend GKE Standard, zonal, Dataplane V2, one Spot node pool.** The cluster management fee is covered by
-  the free tier credit for one zonal or Autopilot cluster. Autopilot is cheaper to run but breaks two platform
-  invariants: GKE owns the Gateway API CRDs (GKE Gateway "is always enabled on Autopilot clusters"), and opt-in
-  privileged components (Falco, Tetragon) cannot run.
+- **Recommend GKE Standard, zonal, Dataplane V2.** The cluster management fee is covered by the free tier credit
+  for one zonal or Autopilot cluster. Node cost of Standard vs Autopilot is not compared here: Standard node prices
+  could not be read **(unverified)**. Autopilot breaks two platform invariants: GKE owns the Gateway API CRDs (GKE
+  Gateway "is always enabled on Autopilot clusters"), and privileged pods run only for allowlisted partners, which
+  rules out Falco and Tetragon.
+- **Node pools:** Spot keeps the bill low but can leave the cluster with zero nodes (preemption, stockout), Argo CD
+  included. Choose between a small on-demand pool for the baseline plus Spot for tenants, or Spot only with outages
+  accepted (open question 9).
 - **Dataplane V2 covers what the plan needs from Cilium** (eBPF datapath, no kube-proxy, `CiliumClusterwideNetworkPolicy`,
   managed Hubble relay), with three differences: CCNP is L3/L4 only, FQDN egress uses a GKE CRD
-  (`FQDNNetworkPolicy`) rather than Cilium `toFQDNs`, and **custom eBPF programs are unsupported on DPv2 nodes**,
-  which rules out Tetragon and eBPF-mode Falco even on Standard.
+  (`FQDNNetworkPolicy`) rather than Cilium `toFQDNs`, and **Google does not support custom eBPF programs on DPv2
+  nodes**. Tetragon and eBPF-mode Falco may still run on Standard, at our own risk of interfering with `anetd`.
+- **Default-deny on GKE needs two more baseline allows:** egress to the GKE metadata server (Workload Identity) and,
+  if Cloud DNS is ever used, to its node-local resolver. `cluster-gke` pins `cluster_dns = "KUBE_DNS"`.
 - **Gateway API:** on Standard, set `gateway_api_config.channel = "CHANNEL_DISABLED"` so our `gateway-api-crds`
   component stays the single CRD owner. Public traffic goes through Cloudflare Tunnel, so the GKE Gateway controller
   (Google Cloud load balancers) is not needed.
@@ -53,13 +60,26 @@ cloudflared). Assume about 1.25 vCPU and 3 GiB of requests in total **(estimate,
 | On demand | 1.25 × 0.0445 × 730 ≈ $40.6 | 3 × 0.0049225 × 730 ≈ $10.8 | **≈ $51** |
 | Spot | 1.25 × 0.0133 × 730 ≈ $12.1 | 3 × 0.0014767 × 730 ≈ $3.2 | **≈ $15** |
 
-Standard pays for whole nodes, but the baseline fits one 2 vCPU / 8 GiB Spot node **(unverified sizing)**.
-Expect the same order of magnitude as Autopilot Spot. Both modes pay extra for:
+Standard pays for whole nodes. The baseline should fit one 2 vCPU / 8 GiB node **(unverified sizing)**, but its
+Spot and on-demand prices, boot disk and Cloud NAT figures were not readable here, so **no Standard vs Autopilot
+cost claim is made**. Get them from the pricing calculator before open question 1. Both modes pay extra for:
 
-- persistent disks;
+- persistent disks (and node boot disks on Standard);
 - egress traffic;
 - Cloud NAT when nodes are private: a gateway charge plus per-GB processing **(unverified figures)**;
-- external IPv4 addresses on public nodes **(unverified figures)**.
+- external IPv4 addresses on public nodes **(unverified figures)**;
+- Dataplane V2 observability metrics (`enable_metrics`), ingested into Managed Service for Prometheus, which bills
+  per sample **(billing basis unverified)**. The module leaves them off until needed;
+- Cloud Logging and Cloud Monitoring ingestion for system components, above the free allotment
+  **(free allotment unverified)**. Keep `logging_config` to `SYSTEM_COMPONENTS` and watch the budget.
+
+Spot risk: a Spot VM can be preempted at any time with short notice, and during a stockout there is no Spot capacity
+at all **(notice length and stockout behaviour from Compute Engine docs, not re-read here)**. With a single Spot pool,
+the cluster can sit at zero nodes, and Argo CD with it, so nothing self-heals until capacity returns. Options:
+
+- a small on-demand pool (1 node) for the baseline components, tainted or labelled, plus an autoscaled Spot pool
+  (min 0) for tenants;
+- Spot only, with outages explicitly accepted for a personal platform.
 
 Cloudflare Tunnel removes the need for any Google Cloud load balancer, and so its forwarding-rule cost.
 
@@ -79,7 +99,7 @@ and [partner workloads](https://docs.cloud.google.com/kubernetes-engine/docs/how
 | Need | Autopilot | Impact |
 |---|---|---|
 | Own Cilium DaemonSet | Not applicable: Dataplane V2 is the Cilium | None, the catalog already skips cilium on GKE |
-| Privileged pods (Falco, Tetragon) | "Containers can't run in Privileged mode unless the container is deployed by a Google Cloud partner." Neither Falco, Tetragon nor Cilium is on the [partner allowlist](https://docs.cloud.google.com/kubernetes-engine/docs/resources/autopilot-partners). Running your own privileged workloads is "available only to eligible Google Cloud customers". | Opt-in runtime security is impossible |
+| Privileged pods (Falco, Tetragon) | "Containers can't run in Privileged mode unless the container is deployed by a Google Cloud partner." Neither Falco, Tetragon nor Cilium is on the [partner allowlist](https://docs.cloud.google.com/kubernetes-engine/docs/resources/autopilot-partners). Running your own privileged workloads is "available only to eligible Google Cloud customers". | Only allowlisted partner sensors (commercial runtime security products) can run; Falco and Tetragon cannot |
 | hostPath | Read-only `/var/log` only; "denies all other read or write access" | Log shippers that tail node files: read-only works |
 | Host namespaces | "Autopilot blocks host namespaces." | No hostNetwork components |
 | NET_ADMIN | Dropped; can be re-enabled per cluster (`allow_net_admin`, `--workload-policies=allow-net-admin`) | Only matters for mesh sidecar init |
@@ -92,7 +112,8 @@ and [partner workloads](https://docs.cloud.google.com/kubernetes-engine/docs/how
 
 ### Recommendation
 
-Use **Standard, zonal, `datapath_provider = "ADVANCED_DATAPATH"`, one Spot node pool with autoscaling 1..N**.
+Use **Standard, zonal, `datapath_provider = "ADVANCED_DATAPATH"`**, with node pools per open question 9 (default
+proposal: one on-demand node for the baseline, an autoscaled Spot pool for tenants).
 
 - It keeps the same invariants as kind and Talos: `gateway-api-crds` owns the CRDs, and Experimental channel types
   stay possible.
@@ -118,7 +139,7 @@ From [Dataplane V2](https://docs.cloud.google.com/kubernetes-engine/docs/concept
 | Hubble | Managed: `monitoring_config.advanced_datapath_observability_config { enable_metrics, enable_relay }`. Hubble relay and CLI are provided, Hubble UI is an optional deploy. [Doc](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/about-dpv2-observability) | Metrics go to Managed Service for Prometheus. No Hubble component of ours on GKE. |
 | Policy logging | Built in, configured through a logging CRD | Replaces Hubble-based deny auditing |
 | Cilium Gateway API / Envoy L7 | Not offered by DPv2 **(unverified, no page says so; the CCNP doc rejects L7)** | GKE needs a non-Cilium Gateway implementation |
-| Custom eBPF programs | "GKE doesn't support installing custom eBPF programs on nodes that use GKE Dataplane V2." | **Tetragon and eBPF-mode Falco are unsupported on GKE in either mode.** |
+| Custom eBPF programs | "GKE doesn't support installing custom eBPF programs on nodes that use GKE Dataplane V2." Reason given: they "can interfere with GKE Dataplane V2 programs and might disrupt cluster networking", and GKE raises a Recommendation when it detects one. | A support statement, not a technical block. Falco and Tetragon attach tracing programs, not datapath programs, so they may run on Standard, but at our own risk of interfering with `anetd` and without Google support. Owner decision (open question 6). |
 
 Running our own Cilium on Standard *instead of* DPv2 is possible per the
 [Cilium GKE install](https://docs.cilium.io/en/stable/installation/k8s-install-helm/) (`gke.enabled`, NodeInit
@@ -140,10 +161,22 @@ carries over, with these constraints:
    `fromEndpoints`, `toPorts` and `toCIDR` **(unverified, test on the first GKE cluster)**. If `toEntities` is
    rejected, the allow for the API server falls back to `toCIDR` with the control plane address, an output of
    `cluster-gke`.
-3. GKE-managed namespaces (`kube-system`, `gke-managed-*`, `gmp-system`…, list **(unverified)**) carry no policy
+3. **GKE metadata server.** The [Workload Identity doc](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/workload-identity)
+   says that with a strict network policy you must "allow egress to 169.254.169.252/32 on port 988" and, "for
+   clusters running GKE Dataplane V2", to "169.254.169.254/32 on port 80". Without it, ESO on Google Secret Manager
+   and anything else using Workload Identity or the metadata server fails. The GKE variant of the cluster-layer CCNP
+   adds a third baseline allow with `toCIDR` for both addresses and ports, on every labelled namespace (simpler than
+   tracking which namespaces use Workload Identity; the metadata server only serves the Pod's own identity).
+4. **Cluster DNS.** The kube-dns allow selects kube-dns Pods. With Cloud DNS for GKE (default on new Autopilot
+   clusters since 1.25.9-gke.400, opt-in on Standard), Pods resolve through 169.254.169.254:53 on Standard or
+   NodeLocal DNSCache 169.254.20.10 on Autopilot ([Cloud DNS doc](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/cloud-dns)),
+   so the pod selector no longer matches. `cluster-gke` pins `dns_config { cluster_dns = "KUBE_DNS" }` so the
+   baseline stays identical to kind and Talos. If Cloud DNS is ever chosen, the baseline needs `toCIDR` allows on
+   port 53 for those addresses instead.
+5. GKE-managed namespaces (`kube-system`, `gke-managed-*`, `gmp-system`…, list **(unverified)**) carry no policy
    label, so the label-driven selector already leaves them out. Conftest only checks rendered namespaces, so
    nothing changes there.
-4. `ClusterNetworkPolicy` (`policy.networking.k8s.io/v1alpha2`, Admin and Baseline tiers, GKE 1.36.0-gke.4447000+)
+6. `ClusterNetworkPolicy` (`policy.networking.k8s.io/v1alpha2`, Admin and Baseline tiers, GKE 1.36.0-gke.4447000+)
    is the cleaner primitive: Baseline tier default-deny that tenants override. It is Pre-GA on GKE and alpha
    upstream. Revisit when Cilium upstream implements it, so that kind and Talos can share it **(Cilium support
    unverified)**.
@@ -192,9 +225,12 @@ Per consumer:
 - **cert-manager DNS-01: no Workload Identity.** The zones are on Cloudflare: the ClusterIssuer uses
   `dns01.cloudflare.apiTokenSecretRef`. The token needs "Zone - DNS - Edit" and "Zone - Zone - Read"
   ([cert-manager](https://cert-manager.io/docs/configuration/acme/dns01/cloudflare/)). ESO delivers it from the
-  `secrets` store. The token should come from `landing-zone/cloudflare`, scoped to the zones, and be stored in the
-  secrets backend outside state (owned by the secrets study). Cloud DNS plus Workload Identity applies only if a
-  zone ever moves to Google Cloud.
+  `secrets` store. **The token is created by hand in the Cloudflare dashboard**, scoped to those two permissions on
+  the platform zones, and stored only in the secrets backend. It is not a `cloudflare_api_token` resource in
+  `landing-zone/cloudflare`: its value would land in state, which breaks that root's rule "No secret value is
+  created by a resource of this configuration". Terraform ownership waits for a write-only or ephemeral token
+  attribute (open question 10, for the secrets study). Cloud DNS plus Workload Identity applies only if a zone ever
+  moves to Google Cloud.
 - **ESO: Workload Identity only if the backend is Google Secret Manager** (open study). The
   [ESO provider](https://external-secrets.io/latest/provider/google-secrets-manager/) supports three patterns:
   - `auth.workloadIdentity.serviceAccountRef` with the service account as a direct principal holding
@@ -224,10 +260,14 @@ provider docs:
 - **Nodes:** private nodes need Cloud NAT for egress (cloudflared, image pulls from non-Google registries). Public
   nodes avoid NAT but expose node IPs, with GKE firewall rules in front.
   - Recommendation: private nodes and Cloud NAT. Accept the cost after checking it in the calculator.
-  - Private Standard nodes block control plane → Pod traffic except on default ports. cert-manager states "the
-    webhook won't work" without "an additional firewall rule to allow the GKE control plane access to your webhook
-    pod". `cluster-gke` must open the webhook ports used by the catalog (cert-manager, ESO; ports to list at
-    implementation time).
+  - Private Standard nodes block control plane → Pod traffic except on ports 443 and 10250. cert-manager's
+    [compatibility page](https://cert-manager.io/docs/installation/compatibility/) warns that the webhook fails
+    without a firewall rule, but both charts already default their webhook to 10250 for this reason: cert-manager
+    `webhook.securePort: 10250` ("In GKE private clusters, by default Kubernetes apiservers are allowed to talk to
+    the cluster nodes only on 443 and 10250", chart `values.yaml`) and ESO `webhook.port: 10250`. **No extra
+    firewall rule is needed while every catalog webhook listens on 443 or 10250.** The catalog keeps those ports;
+    `cluster-gke` gets an optional `extra_webhook_ports` list (empty by default) that creates a
+    `google_compute_firewall` only for a component that cannot move.
 
 ## 6. Terraform
 
@@ -262,8 +302,9 @@ Foundation that outlives clusters:
   `google_compute_router` and `google_compute_router_nat`. Subnets and secondary ranges per cluster belong to
   `cluster-gke`, so a cluster root creates and destroys its own ranges.
 - `google_iam_workload_identity_pool` and `google_iam_workload_identity_pool_provider` for GitHub OIDC, with an
-  `attribute_condition` on `assertion.repository_owner == "gsuquet"` and the repository. Defer until CI needs
-  Google Cloud.
+  `attribute_condition` on the immutable numeric claims `assertion.repository_owner_id` and `assertion.repository_id`
+  ([GitHub OIDC claims](https://docs.github.com/en/actions/reference/security/oidc)), not on the owner or repository
+  names, which can be renamed and re-registered. Defer until CI needs Google Cloud.
 - Artifact Registry (`google_artifact_registry_repository`): **not now.** Platform images come from upstream
   registries and tenant images can use GHCR. Add a remote or cache repository later if Docker Hub rate limits bite.
 
@@ -284,6 +325,9 @@ variable "release_channel"    { type = string, default = "REGULAR" }
 variable "node_pool"          { type = object({ machine_type = string, spot = bool, min = number, max = number, disk_gb = number }) }
 variable "gateway_api_channel"{ type = string, default = "CHANNEL_DISABLED" } # gateway-api-crds owns the CRDs
 variable "deletion_protection"{ type = bool, default = true }
+variable "min_master_version" { type = string }             # pinned, >= 1.36.4-gke.1469000 (see below)
+variable "extra_webhook_ports"{ type = list(number), default = [] } # webhooks not on 443/10250
+variable "observability_metrics" { type = bool, default = false } # DPv2 metrics, billed in Managed Prometheus
 
 # resources
 # google_compute_subnetwork          subnet + secondary ranges (pods, services)
@@ -295,14 +339,29 @@ variable "deletion_protection"{ type = bool, default = true }
 #                                    control_plane_endpoints_config { dns_endpoint_config { allow_external_traffic = true }
 #                                                                     ip_endpoints_config { enabled = false } }
 #                                    private_cluster_config { enable_private_nodes = true }
-#                                    monitoring_config { advanced_datapath_observability_config { enable_metrics = true, enable_relay = true } }
-#                                    release_channel, maintenance_policy, deletion_protection
+#                                    dns_config { cluster_dns = "KUBE_DNS" }   (baseline kube-dns allow keeps matching)
+#                                    monitoring_config { advanced_datapath_observability_config {
+#                                      enable_metrics = var.observability_metrics, enable_relay = true } }
+#                                    logging_config { enable_components = ["SYSTEM_COMPONENTS"] }
+#                                    release_channel, min_master_version, maintenance_policy, deletion_protection
 #                                    no default node pool (initial_node_count omitted, GKE 1.36.4-gke.1469000+)
-# google_container_node_pool         node_config { spot = var.node_pool.spot, ... } + autoscaling
-# google_compute_firewall            control plane -> webhook ports (private nodes)
+# google_container_node_pool         one per entry (baseline on-demand / tenants Spot, open question 9) + autoscaling
+# google_compute_firewall            count = length(var.extra_webhook_ports) > 0 ? 1 : 0
 
-# outputs: cluster name, location, dns_endpoint, ca_certificate, workload_pool, control-plane CIDR
+# outputs: cluster name, location, dns_endpoint, workload_pool, control-plane CIDR
 ```
+
+Default node pool: the provider docs say omitting `initial_node_count` skips the default pool only on GKE
+`1.36.4-gke.1469000+`; older versions need `remove_default_node_pool = true` plus `initial_node_count = 1`, and
+`remove_default_node_pool` is marked deprecated. The module therefore pins `min_master_version` at or above that
+version instead of trusting the REGULAR channel default. If the chosen zone or channel cannot offer it yet, the
+documented fallback is `remove_default_node_pool = true` + `initial_node_count = 1`, removed once the version is
+available.
+
+The DNS endpoint's certificate "is signed by a public, generally recognized Google CA" (network isolation doc),
+unlike the IP endpoint which uses the cluster root CA. So the `kubernetes`/`helm` providers in `clusters/<name>/`
+use `host = "https://${dns_endpoint}"` and a `google_client_config` token, with no `cluster_ca_certificate`; the
+module does not output the CA.
 
 `clusters/<name>/` composes `cluster-gke`, then `bootstrap-gateway-api` (option B only) and `bootstrap-argocd`.
 There is no `bootstrap-cilium` on GKE. `mise run cluster:down <name>` needs `deletion_protection = false` applied
@@ -322,9 +381,9 @@ first, because the provider defaults it to true.
 | `external-secrets` | `secrets` store backend per provider: in-cluster dummy store on kind, backend from the secrets study elsewhere. Workload Identity wiring only for Google Secret Manager. |
 | `cloudflared` | Unchanged (outbound only; needs NAT with private nodes) |
 | Hubble / hubble-ui | No relay component (GKE-managed). Optional `hubble-ui` pointed at the GKE relay (service name **unverified**). |
-| Network policy (cluster layer) | Same CCNP, allow-only form, no node selectors, no L7. API server allow may need `toCIDR` (see §2). |
+| Network policy (cluster layer) | Same CCNP, allow-only form, no node selectors, no L7, plus the metadata server allow (169.254.169.254/32:80, 169.254.169.252/32:988). API server allow may need `toCIDR` (see §2). |
 | Tenant AppProject | Also add `FQDNNetworkPolicy` (`networking.gke.io`) to `namespaceResourceBlacklist` on GKE, otherwise tenants can widen egress |
-| Falco / Tetragon | Not offered on GKE: custom eBPF unsupported on DPv2, privileged pods blocked on Autopilot |
+| Falco / Tetragon | Owner decision (open question 6). Impossible on Autopilot (privileged, not on the partner allowlist). On Standard, possible but unsupported by Google on DPv2 nodes, at our own risk of interfering with `anetd`. Until decided, the catalog does not enable them on GKE. |
 | kubeconform | Needs schemas for GKE CRDs (`FQDNNetworkPolicy`, `ClusterNetworkPolicy` if used) |
 
 ## Open questions for the owner
@@ -338,10 +397,23 @@ first, because the provider defaults it to true.
 4. **One project per cluster or a shared project?** Workload Identity pools are per project. Tenant namespaces with
    the same name on two clusters share IAM identity in a shared project.
 5. **Monthly budget amount** and recipients for `google_billing_budget`.
-6. **Is runtime security (Falco/Tetragon) required on cloud clusters?** If yes, GKE with DPv2 is the wrong target
-   for it. Use a managed alternative (GKE Security Posture, partner sensors) or keep it on Talos only.
+6. **Is runtime security (Falco/Tetragon) required on cloud clusters?** Google does not support custom eBPF on DPv2
+   nodes; it may still work on Standard. Options: run it on Standard and accept the risk (test on the first cluster
+   for interference with `anetd`), use a managed alternative (GKE Security Posture, an allowlisted partner sensor),
+   or keep it on Talos only.
 7. **Google account without an Organization:** projects without an org cannot use org policies or folders. Fine
    for now? **(verify whether the account has a Cloud Identity org)**.
 8. Things to confirm on the first real cluster: CCNP namespace-label selectors and `toEntities` on GKE;
-   `CHANNEL_DISABLED` leaves no Gateway API CRDs; the `--dns-endpoint` flag; Hubble relay service name; webhook
-   firewall ports.
+   the metadata server allow (a Workload Identity call from a default-denied namespace succeeds, and fails without
+   it); `CHANNEL_DISABLED` leaves no Gateway API CRDs; the `--dns-endpoint` flag; Hubble relay service name;
+   cert-manager and ESO webhooks reachable on 10250 with no extra firewall rule.
+9. **Spot risk:** one on-demand node for the baseline (Argo CD, cert-manager, ESO, Gateway, cloudflared) plus a
+   Spot pool for tenants, or Spot only and accept that preemption or a stockout can take the whole cluster,
+   GitOps included, offline?
+10. **Cloudflare DNS-01 token ownership:** stays hand-made in the dashboard and stored only in the secrets backend,
+    unless the secrets study finds a write-only or ephemeral token attribute that keeps the value out of state.
+11. **FQDN egress with the CCNP default-deny:** the GKE FQDN doc only covers how `FQDNNetworkPolicy` combines with
+    Kubernetes `NetworkPolicy`. Does an `FQDNNetworkPolicy` allow open egress for endpoints a CCNP default-deny
+    selects? Test on the first cluster. And since tenants are blacklisted from `FQDNNetworkPolicy`, should the
+    platform layer own per-tenant FQDN allowlists (a field in `gitops/tenants/<tenant>.yaml` rendered into the
+    tenant namespace)?
