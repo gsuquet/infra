@@ -96,12 +96,12 @@ The flow keeps one manual, physical step (writing the image) and does the rest f
 1. **Schematic and image URL (Terraform, no node needed).** `talos_image_factory_schematic` plus `talos_image_factory_urls` (`sbc = "rpi_generic"`, `architecture = "arm64"`) give the `disk_image` URL as an output.
 2. **Flash (human).** Download, `xz -d`, write to the boot medium, insert, power on. A mise task can print the URL and the `dd` command, but must not run `dd` or `sudo` itself.
 3. **Maintenance mode.** The node boots without config, gets a DHCP address and waits for a config on the Talos API (port 50000) without TLS client auth ([Raspberry Pi guide](https://docs.siderolabs.com/talos/v1.14/platform-specific-installations/single-board-computers/rpi_generic.md#bootstrapping-the-node) uses `talosctl apply-config --insecure`). Reserve the address in DHCP (or give a static address in the config) before step 4: every resource below is keyed on the node address.
-4. **Secrets.** `talos_machine_secrets` (or an external source, see the next section) gives the cluster PKI and the admin client config.
-5. **Machine configs.** The data source `talos_machine_configuration` renders one config per role, with `talos_version` pinned to the version used at creation ("the config-generation contract", [provider docs](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/machine)) and `kubernetes_version`. Per-node patches add hostname, VIP, install disk and labels.
+4. **Secrets.** A secrets bundle generated once outside the module and passed as an ephemeral input (see the next section) gives the cluster PKI and the admin client config.
+5. **Machine configs.** The ephemeral resource `talos_machine_configuration` renders **one config per node** (`for_each` over the nodes map), with `talos_version` pinned to the version used at creation ("the config-generation contract", [provider docs](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/machine)), `kubernetes_version`, and `config_patches` that carry the role, hostname, VIP, install selector and labels. Patches must go here: `talos_machine` 0.12.0 has no `config_patches` argument, only `machine_configuration[_wo]`, `image`, `client_configuration[_wo]`, `kubeconfig[_wo]`, `drain_on_upgrade`, `ignore_kubernetes_upgrade_drift`, `reboot_mode` and `on_destroy` ([talos_machine schema](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/machine)).
 6. **Apply.** `talos_machine` (new in 0.12.0) applies the config and, with `image` set, keeps the OS version in sync. **Unverified:** that `talos_machine` applies to a node in maintenance mode on the first run. The provider docs do not describe the insecure first apply; `talos_machine_configuration_apply` is the older resource that the official examples use for that step. Test both on one Pi before writing the module.
-7. **Bootstrap.** `talos_cluster` bootstraps etcd on one control-plane node, tracks `kubernetes_version`, and completes "once the Talos layer (etcd, apid, kubelet) is healthy"; it "does not wait for Kubernetes components" ([talos_cluster](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/cluster)). That suits a CNI-less cluster: the nodes stay `NotReady` until Cilium runs. `talos_machine_bootstrap` is the older single-purpose resource.
-8. **Credentials.** `talos_client_configuration` (talosconfig) and `talos_cluster_kubeconfig` (kubeconfig). Both exist as data sources, resources and ephemeral resources.
-9. **Bootstrap boundary.** `modules/bootstrap-gateway-api`, `modules/bootstrap-cilium` and `modules/bootstrap-argocd` run as on kind. Cilium must arrive in time: after bootstrap, Talos "will hang at phase 18/19 with `retrying error: node not ready`", and "you have about 10 minutes to apply Cilium before the node retries" ([Deploy Cilium](https://docs.siderolabs.com/kubernetes-guides/cni/deploying-cilium.md#machine-configuration-prerequisites)). In one `terraform apply` the gap is short.
+7. **Bootstrap.** `talos_cluster` bootstraps etcd on one control-plane node (`node` "Must be an IP"; a hostname goes in `endpoint`), lists every control-plane IP in `control_plane_nodes` ("Required for HA clusters"), tracks `kubernetes_version`, and completes "once the Talos layer (etcd, apid, kubelet) is healthy"; it "does not wait for Kubernetes components" ([talos_cluster](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/cluster)). That suits a CNI-less cluster: the nodes stay `NotReady` until Cilium runs. `talos_machine_bootstrap` is the older single-purpose resource.
+8. **Credentials.** `talos_client_configuration` (talosconfig) exists only as a data source and an ephemeral resource. `talos_cluster_kubeconfig` (kubeconfig) exists as a data source, a resource and an ephemeral resource ([provider index, 0.12.0](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs)). The module uses the ephemeral forms only (see the next section).
+9. **Bootstrap boundary.** `modules/bootstrap-gateway-api`, `modules/bootstrap-cilium` and `modules/bootstrap-argocd` run as on kind, against the **first control-plane IP** (`bootstrap_endpoint` output), not the VIP: the VIP "will not come alive until after you have bootstrapped Kubernetes" and its election depends on etcd and the API server ([Virtual (shared) IP](https://docs.siderolabs.com/talos/v1.14/networking/advanced/vip.md)), and `talos_cluster` returns before Kubernetes components are ready. Gate the bootstrap modules on the ephemeral `talos_cluster_health` with `skip_kubernetes_checks = true`: the full check waits for `Ready` nodes, which never happens before Cilium, so it would deadlock. **Unverified:** that the skipped check also proves the API server answers, and that an ephemeral resource can gate the `helm`/`kubernetes` providers in the same apply; the local rehearsal must confirm both. Cilium must arrive in time: after bootstrap, Talos "will hang at phase 18/19 with `retrying error: node not ready`", and "you have about 10 minutes to apply Cilium before the node retries" ([Deploy Cilium](https://docs.siderolabs.com/kubernetes-guides/cni/deploying-cilium.md#machine-configuration-prerequisites)). In one `terraform apply` the gap is short.
 
 ### Machine secrets in state and the R2 backend
 
@@ -110,22 +110,28 @@ The provider schema marks these as sensitive, which hides them in plan output bu
 
 Consequences for `terraform-state` on R2 (`clusters/<name>/terraform.tfstate`):
 
-- **Read access to the state is root on the cluster.** The read-only R2 token that agents use for `terraform plan` (`landing-zone/cloudflare/README.md`) would give full Talos and Kubernetes admin, and the key that encrypts Kubernetes Secrets in etcd. That breaks the current split between read and write credentials.
+- **Anyone who can plan holds cluster root and can rewrite the state.** Only the Cloudflare API token has a read-only twin. The R2 state token is shared by `tf` and `tf:read` (both load `landing-zone/cloudflare/pass/state.env`) and is read-write on the whole `terraform-state` bucket. With option A, any process that can plan, agents included, would read the full Talos and Kubernetes PKI and the key that encrypts Kubernetes Secrets in etcd, and could tamper with every state object in the bucket. This is the main reason to keep secrets out of state.
 - **R2 has no object versioning** (`landing-zone/cloudflare/README.md`). A corrupted or deleted state loses the only copy of the PKI. Talos can rebuild a secrets bundle from a control-plane config (**unverified**: `talosctl gen secrets --from-controlplane-config`), but that needs a working node and a talosconfig.
 - Terraform has no client-side state encryption (OpenTofu has). **Unverified** for Terraform 1.17.
 
-The provider supports a secret-free state: ephemeral resources `talos_machine_secrets`, `talos_machine_configuration`, `talos_client_configuration`, `talos_cluster_kubeconfig` (already in 0.11.0), and write-only inputs (`machine_configuration_wo`, `client_configuration_wo`, `kubeconfig_wo`) on `talos_machine` and `talos_cluster` ([Using Ephemeral Resources](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/guides/using_ephemeral_resources)). It needs Terraform 1.11 or later; the repo pins 1.17.2.
+The provider supports a secret-free state: ephemeral resources `talos_machine_secrets`, `talos_machine_configuration`, `talos_client_configuration`, `talos_cluster_kubeconfig`, `talos_cluster_health` (already in 0.11.0), and write-only inputs (`machine_configuration_wo`, `client_configuration_wo`, `kubeconfig_wo`) on `talos_machine` and `talos_cluster` ([Using Ephemeral Resources](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/guides/using_ephemeral_resources)). It needs Terraform 1.11 or later; the repo pins 1.17.2.
 The guide warns: ephemeral secrets **must** live in a secret manager, or each run generates a new PKI.
 
 Options:
 
-| Option | State content | Needs | Agent `plan` |
-| ------ | ------------- | ----- | ------------ |
-| A. `talos_machine_secrets` resource | Full PKI, admin creds | Nothing new | Read token = cluster root |
-| B. `talosctl gen secrets` once, bundle stored in the secrets backend, passed as an ephemeral variable; ephemeral config, client config and kubeconfig; write-only inputs | Hashes and IDs only | A secrets backend reachable at plan time (open study) | Plan needs the bundle, so agents cannot plan without secret access |
-| C. Option A in a separate R2 bucket with its own token | Full PKI | A second bucket and token in `landing-zone/cloudflare` | Agents get no token for that bucket |
+In every option except A, the module has one contract: the bundle is an ephemeral input variable, configs, talosconfig and kubeconfig are ephemeral, and `talos_machine`/`talos_cluster` take the `_wo` arguments. Only the **source** of the bundle changes.
 
-**Recommendation:** B, because the bundle needs an off-state backup anyway (no R2 versioning) and the cost of B over that backup is small. If the secrets backend study is not done when the first Pi cluster is built, start with C, not A, and move to B later. Moving from A or C to B needs no PKI rotation as long as the state never leaked.
+| Option | Bundle source | State content | Needs | Agent `plan` |
+| ------ | ------------- | ------------- | ----- | ------------ |
+| A. `talos_machine_secrets` resource in the cluster root | Terraform state | Full PKI, admin creds | Nothing new | State token = cluster root (rejected) |
+| B. Secrets backend | Bundle generated once, stored in the secrets backend, read at plan time by a mise task or an ephemeral resource of that backend | Hashes and IDs only | The secrets backend (open study) must support Terraform ephemeral reads | Plan needs secret access |
+| C. Local file (stopgap) | Bundle generated once (`talosctl gen secrets`, or a throwaway root with local state), kept **outside the repo**, plus an offline backup; a mise task passes it as `TF_VAR_machine_secrets` | Hashes and IDs only | Nothing new | Only on the machine that holds the file |
+
+**Recommendation:** C now, B when the secrets backend exists. Both keep the settled state layout (bucket `terraform-state`, key `clusters/<name>/terraform.tfstate`) and keep secrets out of state, so the shared read-write R2 token stops being a cluster-root token. Moving from C to B changes only where the mise task reads the bundle; no PKI rotation.
+
+- **Not proposed:** option A in a second R2 bucket with its own token. It would change the settled state layout (one bucket, `terraform-state`) and need a `landing-zone/cloudflare` change, both of which need owner sign-off, and it still puts the PKI in state.
+- **Unverified:** the mapping from the `talosctl gen secrets` YAML to the provider's `machine_secrets` object (field names differ). The throwaway-root variant avoids the mapping: its `talos_machine_secrets` output already has the right shape.
+- **Hand-off to the secrets backend study:** the backend must serve Terraform ephemeral reads at plan time (not only ESO), and must allow an offline backup of the Talos bundle, which is the only copy of the cluster PKI.
 
 ## Control-plane topology and endpoint
 
@@ -141,11 +147,11 @@ Workloads on control planes: Talos 1.14 lists the control-plane `NoSchedule` tai
 
 Endpoint options for the Kubernetes API (the `cluster_endpoint` in every machine config):
 
-- **Layer 2 VIP (recommended).** A `Layer2VIPConfig` on each control plane; the nodes elect the owner through etcd. Requirements: all control planes on one L2 segment; an unused address outside the DHCP pool ([Virtual (shared) IP](https://docs.siderolabs.com/talos/v1.14/networking/advanced/vip.md)). Caveats: the VIP comes up only after bootstrap; failover after a crash takes "up to a minute"; **never** use the VIP as the talosconfig endpoint, because it depends on etcd health. With one control plane, the VIP still gives a stable address for a later move to three.
+- **Layer 2 VIP (recommended for the long-lived endpoint).** A `Layer2VIPConfig` on each control plane; the nodes elect the owner through etcd. Requirements: all control planes on one L2 segment; an unused address outside the DHCP pool ([Virtual (shared) IP](https://docs.siderolabs.com/talos/v1.14/networking/advanced/vip.md)). Caveats: the VIP comes up only after bootstrap; failover after a crash takes "up to a minute"; **never** use the VIP as the talosconfig endpoint, because it depends on etcd health. With one control plane, the VIP still gives a stable address for a later move to three.
 - **DNS name with one A record per control plane.** Works without L2, but clients do not skip a dead node quickly ([Production Clusters](https://docs.siderolabs.com/talos/v1.14/getting-started/prodnotes.md#dns-records)).
 - **External TCP load balancer.** No such device at home. Not worth it.
 
-Use a DNS name that resolves to the VIP as the endpoint (for example `k8s.<cluster>.<home-domain>`), and add it to the API server cert SANs, so the VIP can change without new certificates. The talosconfig lists the control-plane node addresses as endpoints; `talosctl` fails over between them ([Production Clusters, step 13](https://docs.siderolabs.com/talos/v1.14/getting-started/prodnotes.md)).
+Use a DNS name that resolves to the VIP as the endpoint (for example `k8s.<cluster>.<home-domain>`), and add it to the API server cert SANs, so the VIP can change without new certificates. This endpoint goes in the long-lived kubeconfig; the first `terraform apply` bootstraps through the first control-plane IP instead, because the VIP does not exist yet (step 9 above). The talosconfig lists the control-plane node addresses as endpoints; `talosctl` fails over between them ([Production Clusters, step 13](https://docs.siderolabs.com/talos/v1.14/getting-started/prodnotes.md)).
 
 Remote access through Cloudflare Tunnel is out of scope here. The Talos API is gRPC with mutual TLS, so only a TCP proxy can carry it ([Production Clusters](https://docs.siderolabs.com/talos/v1.14/getting-started/prodnotes.md#ensure-network-access)).
 
@@ -176,7 +182,7 @@ kind: KubeProxyConfig
 enabled: false
 ```
 
-On Talos earlier than 1.14, or with an older config contract, the same is `cluster.network.cni.name: none` and `cluster.proxy.disabled: true`. The patch format thus depends on the `talos_version` contract of `talos_machine_configuration`; the module must generate the right one. Apply it to all nodes, before bootstrap.
+On Talos earlier than 1.14, or with an older config contract, the same is `cluster.network.cni.name: none` and `cluster.proxy.disabled: true`. The module does **not** support that format: infra is greenfield, so it validates `config_contract >= v1.14` and renders only multi-document configs. A future contract bump is a deliberate migration. Apply the patch to all nodes, before bootstrap.
 
 ### Helm values (kube-proxy replacement)
 
@@ -200,7 +206,17 @@ cgroup:
 
 Why each Talos-specific value: Talos forbids workloads from loading kernel modules, so `SYS_MODULE` is dropped from the agent capabilities; Talos mounts cgroup v2 and bpffs itself; IPAM must be `kubernetes` ([Deploy Cilium, prerequisites](https://docs.siderolabs.com/kubernetes-guides/cni/deploying-cilium.md#prerequisites)).
 
-Gateway API on Cilium also needs `kubeProxyReplacement: true` and `gatewayAPI.enabled: true`, and the Gateway API CRDs (GatewayClass, Gateway, HTTPRoute, GRPCRoute, BackendTLSPolicy, ReferenceGrant, TLSRoute for Gateway API v1.6.3) installed first; Cilium does not install them ([Cilium Gateway API](https://docs.cilium.io/en/stable/network/servicemesh/gateway-api/gateway-api/)). That matches the plan: `gateway-api-crds` owns the CRDs and comes before Cilium. Without a LoadBalancer implementation at home, use `gatewayAPI.hostNetwork.enabled: true` or keep traffic on the `cloudflared` tunnel (open question).
+Gateway API on Cilium also needs, from the Talos guide's "Without kube-proxy + Gateway API" tab:
+
+```yaml
+kubeProxyReplacement: true
+gatewayAPI:
+  enabled: true
+  enableAlpn: true          # "required to negotiate HTTP/2": needed for GRPCRoute over TLS
+  enableAppProtocol: true
+```
+
+([Deploy Cilium](https://docs.siderolabs.com/kubernetes-guides/cni/deploying-cilium.md); `l7Proxy` stays at its default `true`). Cilium does not install the Gateway API CRDs, and the ones from Gateway API v1.6.3 "must be installed" first: GatewayClass, Gateway, HTTPRoute, GRPCRoute, BackendTLSPolicy, ReferenceGrant and **TLSRoute**; TCPRoute, UDPRoute and ListenerSet are optional ([Cilium Gateway API](https://docs.cilium.io/en/stable/network/servicemesh/gateway-api/gateway-api/)). So the `gateway-api-crds` component must ship every CRD Cilium requires, TLSRoute included, pinned to v1.6.3 (bumped together with Cilium). That matches the plan: `gateway-api-crds` owns the CRDs and comes before Cilium. Without a LoadBalancer implementation at home, use `gatewayAPI.hostNetwork.enabled: true` or keep traffic on the `cloudflared` tunnel (open question).
 
 Known issue: Talos `forwardKubeDNSToHost` (on by default) with Cilium `bpf.masquerade: true` can break CoreDNS; the fix is `forwardKubeDNSToHost: false` ([Deploy Cilium, known issues](https://docs.siderolabs.com/kubernetes-guides/cni/deploying-cilium.md#known-issues)). In Talos 1.14 this setting sits in the `hostDNS` section of `ResolverConfig`.
 
@@ -295,20 +311,21 @@ Goal: the same output contract as `modules/cluster-kind`, so `bootstrap-*` modul
 | ---- | ---- | ----- |
 | `name` | `string` | Cluster name. |
 | `talos_version` | `string` | Installed Talos version, e.g. `v1.14.6`. Drives `talos_machine.image`. |
-| `config_contract` | `string` | `talos_version` of `talos_machine_configuration` and `talos_machine_secrets`. Pinned at creation, changed only on purpose. |
+| `config_contract` | `string` | `talos_version` of `talos_machine_configuration`. Pinned at creation, changed only on purpose. Validation: `>= v1.14`. |
 | `kubernetes_version` | `string` | Feeds both `talos_cluster` and `talos_machine_configuration`. |
-| `endpoint` | `object({ host = string, port = optional(number, 6443) })` | DNS name or VIP for the API. Added to cert SANs. |
+| `endpoint` | `object({ host = string, port = optional(number, 6443) })` | DNS name or VIP for the long-lived API endpoint. Added to cert SANs. Not used for bootstrap. |
 | `vip` | `object({ address = string, link = string })`, nullable | Renders `Layer2VIPConfig` on control planes. |
 | `schematics` | `map(object({ overlay = optional(object({ name = string, image = string, options = optional(any) })), extensions = optional(list(string), []), extra_kernel_args = optional(list(string), []) }))` | One entry per hardware family (`rpi4`, `x86-intel`, ...). |
-| `nodes` | `map(object({ address = string, role = string, arch = string, schematic = string, install_selector = optional(string), labels = optional(map(string), {}), patches = optional(list(string), []) }))` | Key = hostname. Validation: `role` in `controlplane`/`worker`; control-plane count 1 or 3+ and odd. |
+| `nodes` | `map(object({ ip = string, endpoint = optional(string), role = string, arch = string, schematic = string, install_selector = optional(string), labels = optional(map(string), {}), patches = optional(list(string), []) }))` | Key = hostname. `ip` is required and validated as an IP (`talos_cluster.node`, `control_plane_nodes` and `talos_cluster_health` need IPs); `endpoint` is an optional hostname to connect through. Validation: `role` in `controlplane`/`worker`; control-plane count 1 or 3+ and odd. |
 | `allow_scheduling_on_control_planes` | `bool` | Default `true` for Pi-only clusters. |
 | `pod_subnet`, `service_subnet` | `string` | Match `cluster-kind` names. |
 | `cluster_patches` | `list(string)` | Extra documents for every node (e.g. `ResolverConfig`, `SysctlConfig`). |
-| `cni` | `string` | `"none"` only for now (Cilium from `bootstrap-cilium`); renders the CNI and kube-proxy patches for the chosen contract. |
+| `cni` | `string` | `"none"` only for now (Cilium from `bootstrap-cilium`); renders the `KubeFlannelCNIConfig` delete and `KubeProxyConfig` documents. |
 | `discovery_service_endpoint` | `string`, nullable | `null` = Talos default public service. |
-| `machine_secrets_wo` | ephemeral `object`, nullable | Option B above. When `null`, the module creates `talos_machine_secrets` (options A/C). |
+| `machine_secrets` | `object`, `ephemeral = true`, required | The secrets bundle (options B or C). The module never creates secrets. |
 | `drain_on_upgrade` | `bool` | Default `true`. |
-| `kubeconfig_path`, `talosconfig_path` | `string` | Optional local files, as in `cluster-kind`. |
+
+No `kubeconfig_path`/`talosconfig_path` inputs: ephemeral values cannot be written by `local_file`, and admin credentials must not land in the repo tree. A mise task (`cluster:creds <name>`) writes them with `talosctl`/`kubectl` into a path outside the repo (e.g. under `~/.config`) when a human needs them.
 
 Fixed inside the module, not inputs: KubePrism on 7445, `SecurityProfileConfig.workloadIsolation`, `FilesystemTrimConfig`, `ignore_kubernetes_upgrade_drift = true`.
 
@@ -316,9 +333,10 @@ Fixed inside the module, not inputs: KubePrism on 7445, `SecurityProfileConfig.w
 
 | Name | Notes |
 | ---- | ----- |
-| `name`, `endpoint` | Same names as `cluster-kind`. |
-| `cluster_ca_certificate`, `client_certificate`, `client_key`, `kubeconfig` | Same contract as `cluster-kind`; sensitive. With option B these are ephemeral outputs, which changes how the root wires the `helm` and `kubernetes` providers (**unverified**: provider configuration from ephemeral values works in Terraform 1.17 for these providers). |
-| `talosconfig` | Sensitive (or ephemeral). |
+| `name`, `endpoint` | Same names as `cluster-kind`. `endpoint` is the VIP DNS name. |
+| `bootstrap_endpoint` | `https://<first control-plane IP>:6443`, for the `helm`/`kubernetes` providers of the bootstrap modules in the first apply. |
+| `cluster_ca_certificate`, `client_certificate`, `client_key`, `kubeconfig` | Always **ephemeral** (`ephemeral = true`), never stored. Same names as `cluster-kind`, but the root wires them only into provider configuration. **Unverified:** that the `helm` and `kubernetes` providers accept ephemeral values in their configuration on Terraform 1.17 (the language allows ephemeral values in provider blocks; the providers' behavior needs the rehearsal). If `cluster-kind` keeps non-ephemeral outputs, the root modules differ slightly per target. |
+| `talosconfig` | Ephemeral. |
 | `k8s_service_host`, `k8s_service_port` | `localhost` and `7445`, for `bootstrap-cilium`. `cluster-kind` should expose the same pair (its API server address), so the Cilium module takes them from either. |
 | `cilium_target` | `"talos"`, to select the Cilium values file. |
 | `schematic_ids`, `installer_images`, `disk_image_urls` | Per schematic; `disk_image_urls` drives the manual flashing step. |
@@ -329,11 +347,15 @@ Fixed inside the module, not inputs: KubePrism on 7445, `SecurityProfileConfig.w
 ```text
 talos_image_factory_schematic[schematic]
   -> data.talos_image_factory_urls[schematic]           (installer, disk_image)
-talos_machine_secrets | var.machine_secrets_wo
-  -> data/ephemeral talos_machine_configuration[role]   (config_contract, kubernetes_version)
-  -> talos_machine[node]                                (image, per-node patches, ignore_kubernetes_upgrade_drift)
-  -> talos_cluster                                      (first control plane, control_plane_nodes, kubernetes_version)
-  -> talos_client_configuration, talos_cluster_kubeconfig (data or ephemeral)
+var.machine_secrets (ephemeral)
+  -> ephemeral talos_machine_configuration[node]        (config_contract, kubernetes_version, config_patches per node)
+  -> ephemeral talos_client_configuration
+  -> talos_machine[node]                                (machine_configuration_wo, client_configuration_wo, image,
+                                                         ignore_kubernetes_upgrade_drift)
+  -> talos_cluster                                      (node = first CP ip, control_plane_nodes = all CP ips,
+                                                         client_configuration_wo, kubernetes_version)
+  -> ephemeral talos_cluster_health                     (skip_kubernetes_checks = true; gate for bootstrap modules)
+  -> ephemeral talos_cluster_kubeconfig
 ```
 
 The cluster root `clusters/<name>/` then calls `bootstrap-gateway-api`, `bootstrap-cilium` and `bootstrap-argocd`, with the R2 backend key `clusters/<name>/terraform.tfstate`.
@@ -341,9 +363,10 @@ The cluster root `clusters/<name>/` then calls `bootstrap-gateway-api`, `bootstr
 ## Proposed next steps
 
 1. Owner answers the open questions below, at least the hardware inventory and the secrets option.
-2. One-Pi spike on a spare board: flash, maintenance-mode apply with `talos_machine` vs `talos_machine_configuration_apply`, bootstrap, Cilium with the values above, the eBPF check list. Record results in this file.
-3. Write `modules/cluster-talos` and `clusters/<name>/` from the spike.
-4. Build the 3-node cluster next to `olympus`, move workloads, then archive `gsuquet/homelab`.
+2. **Local rehearsal, no hardware.** `talosctl cluster create` on a dev machine, with a draft `modules/cluster-talos` and the bootstrap modules. Proves: the ephemeral contract end to end (secret-free state, providers fed by ephemeral outputs), the bootstrap through the first control-plane IP and the `talos_cluster_health` gate, the Cilium values, the Gateway API CRD set, the default-deny policy layer and a Talos/Kubernetes upgrade. With the **QEMU** provisioner, nodes can start in maintenance mode, so it also answers `talos_machine` vs `talos_machine_configuration_apply` for the first apply (**unverified**: the exact `talosctl cluster create` flag that skips config injection; the QEMU page does not document it). The **Docker** provisioner has no maintenance mode and no real kernel or boot path. Cannot prove: anything Pi-specific (boot media, EEPROM, u-boot, `rpi_generic` overlay) or the arm64 kernel items (BTF, lockdown, sysctls) on the target hardware.
+3. One-Pi spike on a spare board, for the Pi-specific items only: flash, boot media and EEPROM, maintenance-mode apply on real hardware, the eBPF check list. Record results in this file.
+4. Write `modules/cluster-talos` and `clusters/<name>/` from the rehearsal and the spike.
+5. Build the 3-node cluster next to `olympus`, move workloads, then archive `gsuquet/homelab`.
 
 ## Open questions for the owner
 
@@ -351,22 +374,23 @@ The cluster root `clusters/<name>/` then calls `bootstrap-gateway-api`, `bootstr
 2. **Topology.** One control plane first, or wait for three Pis? Are x86 servers in scope for the first cluster, and as control planes?
 3. **Cluster name.** Keep `olympus` for the Talos cluster (and run both side by side under different names during the move), or a new name?
 4. **Network.** Same L2 segment for all nodes (needed for the VIP)? Free address for the VIP outside DHCP? DHCP reservations or static addresses in the Talos config? Internal DNS name for the API endpoint?
-5. **Machine secrets.** Option A, B or C? B depends on the secrets backend study; is a stopgap with C acceptable?
-6. **Agent access.** Should agents be able to run `terraform plan` on Talos clusters at all? With option A that means cluster-admin for agents; with B, secret access at plan time.
-7. **Pi 5 / CM5.** Exclude until they enter the support matrix, or allow the unofficial port for a lab node?
-8. **Storage.** local-path first and add Longhorn later, or Longhorn from day one (needs extensions in the schematic, hence a new schematic and an upgrade to add it later)?
-9. **CoreDNS ownership.** Leave CoreDNS to Talos (updated by `upgrade-k8s`) and keep it out of the catalog, or disable it in Talos and manage it as a component?
-10. **Gateway on bare metal.** Cilium Gateway in host-network mode, a LoadBalancer implementation (Cilium LB IPAM with L2 announcements), or only `cloudflared` for ingress?
-11. **Discovery service.** Accept the public `discovery.talos.dev`, or disable it (KubePrism then learns control planes only from the endpoint)?
-12. **Runtime security on Pis.** Run Falco and Tetragon on the Pi cluster, given 8 GiB nodes and the unchecked kernel items above?
-13. **`olympus` migration window.** Acceptable downtime for the move, and which stateful data must move (volumes, databases)?
+5. **Machine secrets.** Accept C (local bundle outside the repo, offline backup) as the stopgap and B when the secrets backend exists? Where does the offline backup live?
+6. **Agent access.** Should agents be able to run `terraform plan` on Talos clusters at all? With B or C, plan needs the bundle, so agent planning means secret access.
+7. **R2 read-only state token.** `tf` and `tf:read` share one read-write R2 token for the whole `terraform-state` bucket, so "read-only" plans can still write any state. Should `tf:read` (and agents) get a separate read-only R2 token, per bucket or per key prefix? This matters for every root, not only Talos.
+8. **Pi 5 / CM5.** Exclude until they enter the support matrix, or allow the unofficial port for a lab node?
+9. **Storage.** local-path first and add Longhorn later, or Longhorn from day one (needs extensions in the schematic, hence a new schematic and an upgrade to add it later)?
+10. **CoreDNS ownership.** Leave CoreDNS to Talos (updated by `upgrade-k8s`) and keep it out of the catalog, or disable it in Talos and manage it as a component?
+11. **Gateway on bare metal.** Cilium Gateway in host-network mode, a LoadBalancer implementation (Cilium LB IPAM with L2 announcements), or only `cloudflared` for ingress?
+12. **Discovery service.** Accept the public `discovery.talos.dev`, or disable it (KubePrism then learns control planes only from the endpoint)?
+13. **Runtime security on Pis.** Run Falco and Tetragon on the Pi cluster, given 8 GiB nodes and the unchecked kernel items above?
+14. **`olympus` migration window.** Acceptable downtime for the move, and which stateful data must move (volumes, databases)?
 
 ## Sources
 
 All accessed 2026-11-18.
 
-- Sidero Labs, Talos v1.14 docs: [Raspberry Pi Series](https://docs.siderolabs.com/talos/v1.14/platform-specific-installations/single-board-computers/rpi_generic.md), [Support Matrix](https://docs.siderolabs.com/talos/v1.14/getting-started/support-matrix.md), [Unofficial Ports](https://docs.siderolabs.com/talos/v1.14/platform-specific-installations/single-board-computers/unofficial.md), [Image Factory](https://docs.siderolabs.com/talos/v1.14/learn-more/image-factory.md), [System Extensions](https://docs.siderolabs.com/talos/v1.14/build-and-extend-talos/custom-images-and-development/system-extensions.md), [Production Clusters](https://docs.siderolabs.com/talos/v1.14/getting-started/prodnotes.md), [Virtual (shared) IP](https://docs.siderolabs.com/talos/v1.14/networking/advanced/vip.md), [KubePrism](https://docs.siderolabs.com/talos/v1.14/configure-your-talos-cluster/system-configuration/kubeprism.md), [Discovery](https://docs.siderolabs.com/talos/v1.14/configure-your-talos-cluster/system-configuration/discovery.md), [Upgrading Talos Linux](https://docs.siderolabs.com/talos/v1.14/configure-your-talos-cluster/lifecycle-management/upgrading-talos.md), [User Volumes](https://docs.siderolabs.com/talos/v1.14/configure-your-talos-cluster/storage-and-disk-management/disk-management/user.md), [Disk Encryption](https://docs.siderolabs.com/talos/v1.14/configure-your-talos-cluster/storage-and-disk-management/disk-encryption.md), [Default Hardening](https://docs.siderolabs.com/talos/v1.14/security/talos-default-hardening-and-cis-compliance.md), [What's New in 1.14](https://docs.siderolabs.com/talos/v1.14/getting-started/what's-new-in-talos.md), [SecureBoot](https://docs.siderolabs.com/talos/v1.14/platform-specific-installations/bare-metal-platforms/secureboot.md).
+- Sidero Labs, Talos v1.14 docs (VIP, Cilium Gateway values and QEMU pages re-checked 2026-11-19): [Raspberry Pi Series](https://docs.siderolabs.com/talos/v1.14/platform-specific-installations/single-board-computers/rpi_generic.md), [Support Matrix](https://docs.siderolabs.com/talos/v1.14/getting-started/support-matrix.md), [Unofficial Ports](https://docs.siderolabs.com/talos/v1.14/platform-specific-installations/single-board-computers/unofficial.md), [Image Factory](https://docs.siderolabs.com/talos/v1.14/learn-more/image-factory.md), [System Extensions](https://docs.siderolabs.com/talos/v1.14/build-and-extend-talos/custom-images-and-development/system-extensions.md), [Production Clusters](https://docs.siderolabs.com/talos/v1.14/getting-started/prodnotes.md), [Virtual (shared) IP](https://docs.siderolabs.com/talos/v1.14/networking/advanced/vip.md), [KubePrism](https://docs.siderolabs.com/talos/v1.14/configure-your-talos-cluster/system-configuration/kubeprism.md), [Discovery](https://docs.siderolabs.com/talos/v1.14/configure-your-talos-cluster/system-configuration/discovery.md), [Upgrading Talos Linux](https://docs.siderolabs.com/talos/v1.14/configure-your-talos-cluster/lifecycle-management/upgrading-talos.md), [User Volumes](https://docs.siderolabs.com/talos/v1.14/configure-your-talos-cluster/storage-and-disk-management/disk-management/user.md), [Disk Encryption](https://docs.siderolabs.com/talos/v1.14/configure-your-talos-cluster/storage-and-disk-management/disk-encryption.md), [Default Hardening](https://docs.siderolabs.com/talos/v1.14/security/talos-default-hardening-and-cis-compliance.md), [What's New in 1.14](https://docs.siderolabs.com/talos/v1.14/getting-started/what's-new-in-talos.md), [SecureBoot](https://docs.siderolabs.com/talos/v1.14/platform-specific-installations/bare-metal-platforms/secureboot.md), [QEMU](https://docs.siderolabs.com/talos/v1.14/platform-specific-installations/local-platforms/qemu.md).
 - Sidero Labs, Kubernetes guides: [Deploy Cilium CNI](https://docs.siderolabs.com/kubernetes-guides/cni/deploying-cilium.md), [Upgrading Kubernetes](https://docs.siderolabs.com/kubernetes-guides/advanced-guides/upgrading-kubernetes.md), [Storage](https://docs.siderolabs.com/kubernetes-guides/csi/storage.md), [Local Storage](https://docs.siderolabs.com/kubernetes-guides/csi/local-storage.md), [Longhorn](https://docs.siderolabs.com/kubernetes-guides/csi/longhorn.md).
-- Terraform Registry, `siderolabs/talos` 0.12.0: [talos_machine](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/machine), [talos_cluster](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/cluster), [talos_machine_secrets](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/machine_secrets), [talos_machine_configuration_apply](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/machine_configuration_apply), [talos_image_factory_schematic](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/image_factory_schematic), [talos_image_factory_urls](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/data-sources/image_factory_urls), [Using Ephemeral Resources](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/guides/using_ephemeral_resources).
+- Terraform Registry, `siderolabs/talos` 0.12.0: [talos_machine](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/machine), [talos_cluster](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/cluster), [talos_machine_secrets](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/machine_secrets), [talos_machine_configuration_apply](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/machine_configuration_apply), [talos_image_factory_schematic](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/resources/image_factory_schematic), [talos_image_factory_urls](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/data-sources/image_factory_urls), [talos_cluster_health](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/ephemeral-resources/cluster_health), [Using Ephemeral Resources](https://registry.terraform.io/providers/siderolabs/talos/0.12.0/docs/guides/using_ephemeral_resources).
 - Cilium docs (stable): [System Requirements](https://docs.cilium.io/en/stable/operations/system_requirements/), [Gateway API support](https://docs.cilium.io/en/stable/network/servicemesh/gateway-api/gateway-api/).
 - `gsuquet/homelab` (frozen): `ansible/inventory/`, `ansible/roles/os_raspberrypi/`, `docs/reference/gitops-layout.md`, `docs/explanation/runtime-security-with-tetragon-and-falco.md`, `docs/reference/terraform-modules/cluster-kind/index.md`.
