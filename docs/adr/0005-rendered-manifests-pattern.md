@@ -34,6 +34,15 @@ and tenant manifests in `gsuquet/gitops` (ADR-0007).
 * Argo CD applies those files as a directory source, with no Helm.
 * Sync waves order the apply: `CustomResourceDefinition` resources get wave `-1`, ordinary resources stay on the
   default wave `0`, and child `Application` resources get wave `1` or higher.
+* The render is deterministic: rendering the same sources twice gives byte-identical files. No chart may generate
+  values at template time (`genCA`, `genSelfSignedCert`, `randAlphaNum`, ...). Certificates and keys come from
+  cert-manager or the chart's in-cluster generator (for example Cilium's `certgen` job instead of
+  `hubble.tls.auto.method=helm`), and credentials from the `secrets` store (ADR-0016). Component values set
+  these options explicitly.
+* Helm hooks are kept: the render runs `helm template` without `--no-hooks`, and Argo CD maps the
+  `helm.sh/hook` annotations to its own hooks (`PreSync`, `PostSync`, ...). A component whose hooks do not map
+  (rollback or test hooks, or install-only logic that breaks when run on every sync) disables them in its values
+  or renders with `--no-hooks`, recorded in the component's folder.
 
 ### Consequences
 
@@ -43,12 +52,17 @@ and tenant manifests in `gsuquet/gitops` (ADR-0007).
 * Bad, because upgrades produce large diffs.
 * Bad, because a source change without a render leaves stale files; `mise run manifests:check` in CI fails on
   any difference (ADR-0019), so Renovate chart bumps need a render commit.
-* Bad, because Helm hooks are not run by Argo CD as Helm hooks; charts that rely on hooks need review at render
-  time.
+* Bad, because the output lands in public repositories: a chart that renders secret material at template time
+  would publish it, and would also make `manifests:check` fail on every run because the values change. Charts
+  need explicit values to avoid it.
+* Bad, because Argo CD's hook mapping is annotation compatibility, not Helm's lifecycle: it cannot tell an install
+  from an upgrade, so `pre-install` hooks run on every sync.
 
 ### Confirmation
 
-CI runs `mise run manifests:check`; no Argo CD `Application` in `rendered/` has a `helm` source.
+CI runs `mise run manifests:check` (two renders must match the committed files), betterleaks over `rendered/`,
+and the Conftest rule that fails any `Secret` with `data` or `stringData` (ADR-0016). No Argo CD `Application` in
+`rendered/` has a `helm` source.
 
 ## Pros and Cons of the Options
 
@@ -70,4 +84,5 @@ CI runs `mise run manifests:check`; no Argo CD `Application` in `rendered/` has 
 ## More Information
 
 * [Argo CD sync waves](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-waves/)
+* [Argo CD Helm hooks mapping](https://argo-cd.readthedocs.io/en/stable/user-guide/helm/#helm-hooks)
 * `homelab` explanation page "Rendered manifests pattern" (reference implementation)

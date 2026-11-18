@@ -25,4 +25,4 @@ accepted ADR with a new one instead of rewriting it.
 | [0017](0017-repository-layout.md) | Organise the repository by landing zones, modules, cluster roots and gitops | accepted |
 | [0018](0018-terraform-state-backends.md) | Store kind state locally and other cluster states in the R2 backend | accepted |
 | [0019](0019-lifecycle-tasks-and-ci-scope.md) | Drive lifecycles with mise tasks and keep CI to static checks | accepted |
-| 0020 | Secrets backend | reserved |
+| 0020 | Secrets backend | reserved (proposed in a separate pull request; link it here when merged) |

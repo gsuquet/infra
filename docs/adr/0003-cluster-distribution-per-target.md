@@ -43,6 +43,9 @@ Each target has one child module: `cluster-kind`, `cluster-talos`, `cluster-gke`
 * Good, because kind gives a disposable cluster to test the same catalog locally.
 * Bad, because three distributions differ in CNI, storage and load balancing; the catalog must handle these
   differences per cluster (see ADR-0011).
+* Bad, because GKE owns some in-cluster pieces itself: its dataplane (ADR-0011) and, with its Gateway API
+  enabled (always on Autopilot), the Gateway API CRDs (ADR-0012). The catalog skips `cilium` and
+  `gateway-api-crds` on GKE.
 * Bad, because the `siderolabs/talos` provider does not manage the hardware itself: flashing images and network
   boot remain manual steps.
 * Deferred: non-GKE clouds (AWS, Azure, ...) are out of scope.

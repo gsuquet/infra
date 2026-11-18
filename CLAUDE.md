@@ -16,7 +16,8 @@ Read [`README.md`](README.md) and the decisions in [`docs/adr/`](docs/adr/README
 ## Tasks
 
 * `mise install`: pinned tools (`.mise/config.toml` + `.mise/mise.lock`).
-* `pre-commit run --all-files`: static checks, the same as CI.
+* `pre-commit run --all-files`: static checks. No CI workflow exists yet (planned, ADR-0019): nothing gates a
+  pull request but these local hooks.
 * `mise run manifests:render|check` and `mise run cluster:up|plan|down <name>` (planned, ADR-0019).
 
 ## Rules for agents
@@ -24,7 +25,9 @@ Read [`README.md`](README.md) and the decisions in [`docs/adr/`](docs/adr/README
 * Never run `pass-cli`, so never `mise run tf` or `mise run tf:read` (both call it).
 * Terraform is read-only for agents: `terraform init -backend=false` and `terraform validate` only. Never
   `apply`, `destroy`, `import`, `state` or anything that reads or writes remote state or calls Cloudflare.
-* A throwaway local kind cluster is allowed for tests; delete it afterwards.
+* Only exception: a throwaway local kind cluster for tests. `apply` and `destroy` (directly or through
+  `mise run cluster:up|down`) are allowed on a kind cluster root with local state, no remote backend and no
+  credentials. Delete the cluster afterwards.
 * Public repository: never write employer or client names, nor words that label a context as work or
   personal. Before each commit, check `git grep` for them.
 * Pin every tool in mise (with lockfile) and every GitHub Action and pre-commit hook by commit SHA with a version

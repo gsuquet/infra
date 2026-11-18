@@ -40,7 +40,9 @@ opt-in component, connects outbound to Cloudflare, and forwards to the cluster's
 
 ### Confirmation
 
-No cluster renders a `Service` of type `LoadBalancer` for public traffic without an ADR.
+No cluster exposes a `Service` or `Gateway` on a public IP address without an ADR: public traffic enters only
+through `cloudflared`. `LoadBalancer` Services with private addresses (Cilium LB-IPAM on the LAN, ADR-0012) are
+allowed.
 
 ## Pros and Cons of the Options
 

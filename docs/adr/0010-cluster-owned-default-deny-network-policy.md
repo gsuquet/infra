@@ -27,13 +27,18 @@ other pod. Who owns network isolation, and how is a namespace guaranteed to be c
 
 Chosen option: "One `CiliumClusterwideNetworkPolicy` default deny selected by a namespace label".
 
-* A cluster-layer component renders a `CiliumClusterwideNetworkPolicy` that selects every endpoint in a
-  namespace carrying the policy label (Cilium exposes namespace labels to endpoints as
+* The render emits, for every cluster (GKE included), a cluster layer in `gitops/clusters/<name>/rendered/platform/`
+  that is not a catalog component and cannot be disabled in `cluster.yaml`. It holds the platform `Namespace`
+  manifests, tenant onboarding (ADR-0009) and a `CiliumClusterwideNetworkPolicy` that selects every endpoint in
+  a namespace carrying the policy label (Cilium exposes namespace labels to endpoints as
   `io.cilium.k8s.namespace.labels.<key>`) and denies ingress and egress by default.
 * Baseline allows in the same layer: egress to kube-dns and to the Kubernetes API server (`kube-apiserver`
   entity).
 * `kube-system` is excluded: it does not carry the label.
 * Conftest fails any rendered `Namespace` (platform or tenant) that lacks the label, except `kube-system`.
+* Every labelled namespace also carries a `pod-security.kubernetes.io/enforce` label: `restricted` for tenants
+  (ADR-0009); platform namespaces default to `baseline` and opt down to `privileged` explicitly where a component
+  needs host access (for example Cilium, if it ever runs outside `kube-system`).
 * Tenants cannot create `NetworkPolicy` or `CiliumNetworkPolicy` (ADR-0009).
 
 ### Consequences
@@ -42,17 +47,25 @@ Chosen option: "One `CiliumClusterwideNetworkPolicy` default deny selected by a 
 * Good, because the label check turns a missing policy into a CI failure.
 * Bad, because every platform component needs explicit allow rules (Argo CD to Git, cert-manager to ACME,
   cloudflared to Cloudflare, webhooks from the API server); these are written per component in the catalog.
-* Bad, because namespaces must exist as rendered `Namespace` manifests: Argo CD's `CreateNamespace=true` and
-  chart-created namespaces would bypass the Conftest check.
-* Risk (unverified): on GKE, Dataplane V2 is Cilium-based but its support for `CiliumClusterwideNetworkPolicy`
-  and namespace-label selectors was not verified against the GKE documentation. If unsupported, GKE needs a
-  fallback (per-namespace Kubernetes `NetworkPolicy`) with its own ADR.
+* Bad, because the label selector fails open: a namespace created at runtime (Argo CD `CreateNamespace=true`, a
+  chart or operator creating namespaces, Kargo `Project` namespaces) never passes through Conftest and, without
+  the label, has no default deny. Namespaces must exist as rendered `Namespace` manifests; components that create
+  namespaces at runtime are configured not to, or their namespaces are pre-rendered with the label.
+* Bad, because endpoint policies do not cover `hostNetwork` pods: they share the node's identity. The Pod Security
+  labels keep tenants off the host network; platform components that need it (Cilium itself) are reviewed per
+  component.
+* Deferred: a runtime admission check (a `ValidatingAdmissionPolicy` rejecting any `Namespace` created without the
+  policy and Pod Security labels) to close the fail-open gap.
+* Risk (unverified): the default deny is required on GKE too, but GKE Dataplane V2 is a managed Cilium and its
+  support for `CiliumClusterwideNetworkPolicy` with namespace-label selectors is not verified against the GKE
+  documentation. If unsupported, GKE gets a fallback (a Kubernetes `NetworkPolicy` default deny per labelled
+  namespace, rendered in the same cluster layer) with its own ADR.
 * Deferred: the allow-rule format for tenants (ingress from a Gateway, egress to external services).
 
 ### Confirmation
 
-Conftest policy on `gitops/clusters/*/rendered/**`: each `Namespace` except `kube-system` has the label; each
-cluster with Cilium renders the default-deny policy.
+Conftest policy on `gitops/clusters/*/rendered/**`: each `Namespace` except `kube-system` has the policy label
+and a Pod Security label; every cluster, GKE included, renders the default-deny policy in `rendered/platform/`.
 
 ## Pros and Cons of the Options
 

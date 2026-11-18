@@ -9,7 +9,7 @@ decision-makers: gsuquet
 ## Context and Problem Statement
 
 A tenant release moves through stages (for example kind, then Talos, then GKE). Kargo can promote by writing to
-Git and by driving Argo CD directly (`argo-cd-update` step). How are releases promoted?
+Git and by driving Argo CD directly (`argocd-update` step). How are releases promoted?
 
 ## Decision Drivers
 
@@ -19,7 +19,7 @@ Git and by driving Argo CD directly (`argo-cd-update` step). How are releases pr
 ## Considered Options
 
 * Kargo with git-only promotion steps (render, then pull request to `gsuquet/gitops`)
-* Kargo with the `argo-cd-update` step
+* Kargo with the `argocd-update` step
 * Manual pull requests, no promotion tool
 
 ## Decision Outcome
@@ -33,14 +33,14 @@ cluster syncs after the merge.
 * Good, because each promotion is a commit with a diff.
 * Good, because Kargo needs no write access to any Argo CD.
 * Bad, because promotion latency includes the pull request merge and the Argo CD sync interval.
-* Bad, because Kargo health verification cannot rely on the `argo-cd-update` step's feedback.
-* Deferred: the `argo-cd-update` step, and where Kargo itself runs (it is an opt-in component, not baseline).
-* Unverified: exact Kargo step names (`git-clone`, `git-commit`, `git-push`, `git-open-pr`, ...) were not checked
-  against the current Kargo documentation, which is outside the allowed fetch domains.
+* Bad, because Kargo health verification cannot rely on the `argocd-update` step's feedback.
+* Deferred: the `argocd-update` step, and where Kargo itself runs (it is an opt-in component, not baseline).
+* To verify against the Kargo documentation when implementing: the exact names of the git promotion steps
+  (`git-clone`, `git-commit`, `git-push`, `git-open-pr`, ...).
 
 ### Confirmation
 
-No Kargo `Stage` in `infra` or `gsuquet/gitops` uses an `argo-cd-update` step.
+No Kargo `Stage` in `infra` or `gsuquet/gitops` uses an `argocd-update` step.
 
 ## Pros and Cons of the Options
 
@@ -49,7 +49,7 @@ No Kargo `Stage` in `infra` or `gsuquet/gitops` uses an `argo-cd-update` step.
 * Good, because GitOps purity and audit trail.
 * Bad, because slower feedback.
 
-### Kargo with `argo-cd-update`
+### Kargo with `argocd-update`
 
 * Good, because immediate sync and health feedback.
 * Bad, because Kargo needs Argo CD credentials on every cluster.

@@ -17,8 +17,9 @@ k3s cluster until a Talos cluster from this repository replaces it
   ([ADR-0004](docs/adr/0004-self-managed-argo-cd-per-cluster.md)), applying committed, rendered manifests
   with sync waves ([ADR-0005](docs/adr/0005-rendered-manifests-pattern.md)).
 * **Catalog**: components in `gitops/components/`, enabled per cluster in `cluster.yaml`
-  ([ADR-0006](docs/adr/0006-component-catalog-and-cluster-file.md)). Baseline: `gateway-api-crds`, `cilium`
-  (not GKE), `argocd`, `cert-manager`, `external-secrets` ([ADR-0014](docs/adr/0014-baseline-components.md)).
+  ([ADR-0006](docs/adr/0006-component-catalog-and-cluster-file.md)). Baseline: `gateway-api-crds` (not
+  GKE, which owns its CRDs), `cilium` (not GKE), `argocd`, `cert-manager`, `external-secrets`
+  ([ADR-0014](docs/adr/0014-baseline-components.md)).
 * **Networking**: Cilium with kube-proxy replacement (GKE: Dataplane V2), Gateway API with one CRD owner,
   public exposure through Cloudflare Tunnel, cluster-wide default-deny network policy
   ([ADR-0010](docs/adr/0010-cluster-owned-default-deny-network-policy.md) to
@@ -59,9 +60,10 @@ The Cloudflare landing zone runs through `mise run tf` (write token) and `mise r
 credentials and the first-apply bootstrap are described in
 [`landing-zone/cloudflare/README.md`](landing-zone/cloudflare/README.md).
 
-Planned tasks ([ADR-0019](docs/adr/0019-lifecycle-tasks-and-ci-scope.md)): `mise run cluster:up|plan|down <name>`
-and `mise run manifests:render|check`. CI on pull requests runs static checks only; `terraform plan` stays
-local.
+`pre-commit run --all-files` runs the static checks. There is no CI workflow yet: CI on pull requests (pre-commit,
+`manifests:check`, kubeconform, Conftest) is planned in
+[ADR-0019](docs/adr/0019-lifecycle-tasks-and-ci-scope.md), together with `mise run cluster:up|plan|down <name>`
+and `mise run manifests:render|check`. `terraform plan` stays local.
 
 ## License
 

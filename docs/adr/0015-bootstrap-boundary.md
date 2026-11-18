@@ -31,7 +31,7 @@ Order, per cluster root (`clusters/<name>/`):
 
 1. `cluster-{kind,talos,gke}`: the cluster.
 2. `bootstrap-gateway-api`: the Gateway API CRDs, from `rendered/gateway-api-crds/` (needed by Cilium's Gateway
-   API support at start).
+   API support at start; skipped on GKE, which installs its own, ADR-0012).
 3. `bootstrap-cilium`: Cilium, from `rendered/cilium/` (skipped on GKE).
 4. `bootstrap-argocd`: Argo CD and its root `Application`, from `rendered/argocd/`.
 

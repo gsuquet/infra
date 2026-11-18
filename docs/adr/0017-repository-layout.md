@@ -49,7 +49,8 @@ A cluster's name is the same in `clusters/<name>/` and `gitops/clusters/<name>/`
 
 ### Confirmation
 
-No `modules/` folder below a root module; each folder has a README describing what belongs there.
+No `modules/` folder below a root module (true once `landing-zone/cloudflare/modules/domain` has moved to
+`modules/cloudflare-domain`); each folder has a README describing what belongs there.
 
 ## Pros and Cons of the Options
 

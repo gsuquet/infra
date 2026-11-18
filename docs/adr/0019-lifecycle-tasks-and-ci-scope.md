@@ -48,7 +48,8 @@ CI on pull requests: pre-commit static checks, `manifests:check`, kubeconform an
 
 ### Confirmation
 
-The CI workflow calls only mise tasks and pre-commit; no workflow references Terraform credentials.
+The CI workflow (not yet written) calls only mise tasks and pre-commit; no workflow references Terraform
+credentials.
 
 ## Pros and Cons of the Options
 

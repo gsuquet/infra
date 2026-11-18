@@ -63,7 +63,8 @@ check enforces this once `cluster.yaml` has a `distribution` field.
 ### Distribution defaults
 
 * Good, because nothing to install.
-* Bad, because Flannel and kindnet do not enforce network policies.
+* Bad, because the default CNIs support neither `CiliumClusterwideNetworkPolicy` nor kube-proxy replacement, and
+  kindnet differs from the Talos dataplane.
 
 ## More Information
 

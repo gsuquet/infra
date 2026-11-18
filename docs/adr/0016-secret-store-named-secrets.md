@@ -26,22 +26,27 @@ binding to a backend.
 
 ## Decision Outcome
 
-Chosen option: "External Secrets Operator with a store named `secrets` in every namespace". Every
-`ExternalSecret` references the store `secrets`. The platform renders that store for each namespace (tenant
-namespaces through onboarding, ADR-0009). On kind, the store is an in-cluster backend with dummy values.
+Chosen option: "External Secrets Operator with a store named `secrets` in every namespace". The store is a
+namespaced `SecretStore` named `secrets`, never a `ClusterSecretStore`: every `ExternalSecret` sets
+`secretStoreRef: {kind: SecretStore, name: secrets}`, so consumers never change, whatever the backend. The
+platform renders that store for each namespace (tenant namespaces through onboarding, ADR-0009). On kind, the
+store is an in-cluster backend with dummy values.
 
 ### Consequences
 
 * Good, because changing the backend changes only the rendered stores, not consumers.
 * Good, because kind runs the full catalog with no credentials.
 * Bad, because all consumers get the same interface, even where a backend offers richer features.
-* Open: the backend itself (ADR-0020), the store kind (`SecretStore` per namespace or a `ClusterSecretStore` with
-  namespace conditions), and the kind in-cluster provider (ESO `fake` or `kubernetes` provider).
+* Bad, because one store per namespace means one backend credential or identity binding per namespace, rendered
+  by the platform.
+* Risk: a tenant application could ship its own `SecretStore` named `secrets` and fight the platform-rendered
+  one; adding `SecretStore` to the tenant `namespaceResourceBlacklist` is pending the owner's decision (ADR-0009).
+* Open: the backend itself (ADR-0020) and the kind in-cluster provider (ESO `fake` or `kubernetes` provider).
 
 ### Confirmation
 
-A Conftest policy fails any `ExternalSecret` whose `secretStoreRef.name` is not `secrets`, and any `Secret` with
-`data` or `stringData` in rendered manifests.
+A Conftest policy fails any `ExternalSecret` whose `secretStoreRef` is not `kind: SecretStore`, `name: secrets`,
+any `ClusterSecretStore`, and any `Secret` with `data` or `stringData` in rendered manifests.
 
 ## Pros and Cons of the Options
 

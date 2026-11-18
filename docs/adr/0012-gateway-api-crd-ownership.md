@@ -28,7 +28,14 @@ on Argo CD sync. Who owns the CRDs, and how are implementations chosen?
 
 Chosen option: "Dedicated `gateway-api-crds` component".
 
-* `gateway-api-crds` renders the upstream Gateway API CRDs at one pinned version; it is a baseline component.
+* `gateway-api-crds` renders the upstream Gateway API CRDs at one pinned version; it is a baseline component on
+  kind and Talos. It includes every CRD the enabled implementations require (Cilium's Gateway API support
+  requires `GatewayClass`, `Gateway`, `HTTPRoute`, `GRPCRoute`, `BackendTLSPolicy`, `ReferenceGrant` and
+  `TLSRoute`, all in the standard channel).
+* GKE: GKE installs and manages the standard-channel Gateway API CRDs itself when its Gateway API is enabled,
+  and it is always enabled on Autopilot. On GKE, GKE is the CRD owner: the catalog skips `gateway-api-crds` (as
+  it skips `cilium`), and `bootstrap-gateway-api` is not called. Implementations on GKE must support the
+  GKE-installed version.
 * Every implementation is installed with its CRD installation disabled, and owns exactly one `GatewayClass`.
 * Implementations are swappable per cluster in `cluster.yaml`; more than one can coexist.
 
@@ -39,11 +46,18 @@ Chosen option: "Dedicated `gateway-api-crds` component".
 * Bad, because every implementation's supported Gateway API version must be checked against the pinned CRDs on
   upgrade.
 * Bad, because the CRDs are installed by Terraform at bootstrap before Cilium (ADR-0015), then adopted by Argo CD.
-* Deferred: which implementation is the default per cluster; experimental-channel CRDs (e.g. `TLSRoute`).
+* Bad, because on GKE the CRD version follows Google's schedule, not the pinned version.
+* Bad, because Cilium creates a `Service` of type `LoadBalancer` per `Gateway` by default, and kind and Talos have
+  no load balancer provider: those clusters need Cilium LB-IPAM with L2 announcements (private LAN addresses) or
+  Cilium's Gateway API host network mode. The choice is deferred to the `cilium` component; public traffic still
+  enters only through Cloudflare Tunnel (ADR-0013).
+* Deferred: which implementation is the default per cluster; experimental-channel CRDs (for example
+  `TCPRoute`, `UDPRoute`).
 
 ### Confirmation
 
-A Conftest policy fails any Gateway API `CustomResourceDefinition` rendered outside `rendered/gateway-api-crds/`.
+A Conftest policy fails any Gateway API `CustomResourceDefinition` rendered outside `rendered/gateway-api-crds/`,
+and any GKE cluster that renders `gateway-api-crds`.
 
 ## Pros and Cons of the Options
 
@@ -65,4 +79,5 @@ A Conftest policy fails any Gateway API `CustomResourceDefinition` rendered outs
 ## More Information
 
 * [Gateway API](https://gateway-api.sigs.k8s.io/)
+* [Deploying Gateways on GKE](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/deploying-gateways)
 * [Cilium Gateway API support](https://docs.cilium.io/en/stable/network/servicemesh/gateway-api/gateway-api/)
