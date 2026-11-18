@@ -1,0 +1,18 @@
+# Modules
+
+Every Terraform child module of the repository. A child module has no backend and no provider configuration:
+the root modules in [`landing-zone/`](../landing-zone/) and [`clusters/`](../clusters/) call it.
+
+| Module | Purpose |
+| --- | --- |
+| `cloudflare-domain` | One Cloudflare zone with baseline settings, DNSSEC, CAA and mail records |
+| `cluster-kind` | kind cluster for developer machines, default CNI and kube-proxy disabled |
+| `cluster-talos` | Talos cluster on Raspberry Pis and local servers (`siderolabs/talos` provider) |
+| `cluster-gke` | GKE cluster with Dataplane V2 |
+| `bootstrap-gateway-api` | Gateway API CRDs from `gitops/clusters/<name>/rendered/gateway-api-crds/` |
+| `bootstrap-cilium` | Cilium from `rendered/cilium/` (not on GKE) |
+| `bootstrap-argocd` | Argo CD and its root Application from `rendered/argocd/` |
+
+Bootstrap modules apply the rendered manifests once; Argo CD then adopts them
+([ADR-0015](../docs/adr/0015-bootstrap-boundary.md)). Files follow the HashiCorp standard module structure, with
+the `terraform` block in `terraform.tf`.
