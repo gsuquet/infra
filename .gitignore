@@ -201,6 +201,8 @@ override.tf.json
 terraform.rc
 *.tfplan
 local.auto.tfvars
+# Child modules do not pin providers: the root module's lock file does.
+**/modules/**/.terraform.lock.hcl
 
 ### Terragrunt ###
 **/.terragrunt-cache/*
@@ -211,3 +213,11 @@ terragrunt-debug.tfvars.json
 
 ### Helm ###
 **/charts/*.tgz
+
+
+#### Repository ####
+# Rendered manifests are generated, and committed on purpose: no rule above
+# (lib/, build/, out/, env/...) may hide a component named like one of them
+# from manifests:check.
+!**/rendered/
+!**/rendered/**
