@@ -53,7 +53,7 @@ A person edits one SOPS file per cluster. A separate Terraform root per cluster 
 | Criterion | Assessment |
 | --- | --- |
 | Public repo | Ciphertext in Git. A leaked scope key or recovery key opens every past version in the history. Each leak forces a rotation of every value at its issuer. |
-| Agent isolation | Weak by construction: same OS user. The production scope key sits on a hardware key with touch, which is a real control for decryption. |
+| Agent isolation | Weak by construction: same OS user. The production scope key sits on a hardware key with touch, which is a real control for decryption. Values also sit in Proton Pass, so A is exposed to the same `pass-cli` session risk as B (see [Agent read paths](#agent-read-paths)). On Talos, the admin kubeconfig in the cluster state reads the seeds, but only from a network that reaches the API server. |
 | Write cost, N clusters | **High.** One SOPS edit per cluster file that holds the value, then one person-run `secrets:apply` per cluster. A value shared by 3 clusters is 3 edits (or a shared file) and 3 applies. |
 | kind | Works offline, but a re-created kind has no seeds until a person applies them. In homelab this blocked tests. |
 | Bootstrap credential | None in the cluster. The applier needs a kubeconfig with write access to the seed namespaces. |
@@ -78,7 +78,16 @@ Authentication, from the [ESO GCP provider page](https://external-secrets.io/lat
 - The Terraform equivalent is `jwks_json` in the `oidc` block of `google_iam_workload_identity_pool_provider` (RSA and EC keys) ([provider docs](https://raw.githubusercontent.com/hashicorp/terraform-provider-google/main/website/docs/r/iam_workload_identity_pool_provider.html.markdown), **verified**).
 - Subject mapping `google.subject=assertion.sub` gives `system:serviceaccount:<ns>:<sa>`; an attribute condition can limit namespaces with CEL on `assertion['kubernetes.io']['namespace']` **(verified)**.
 
-Per-namespace isolation (the reason homelab had one seed namespace per consumer) maps onto IAM: each namespace store uses a service account in its own namespace, so each namespace is its own principal, and `roles/secretmanager.secretAccessor` is granted per secret to the principals that need it. These IAM bindings hold no values, so agents can write them in Terraform and the owner reviews them.
+Per-namespace isolation (the reason homelab had one seed namespace per consumer) maps onto IAM: each namespace store uses a service account in its own namespace, so each namespace is its own principal. These IAM bindings hold no values, so agents can write them in Terraform and the owner reviews them.
+
+Granting `roles/secretmanager.secretAccessor` per secret costs O(secrets x namespaces x pools) bindings, and every new tenant `ExternalSecret` (in `gsuquet/gitops`) would need an IAM change in `infra` and a person-run apply. The cheaper shape is one binding per namespace principal with an IAM Condition on a name prefix, for example `resource.name.startsWith("projects/PROJECT_NUMBER/secrets/<tenant>--<namespace>--")`. Secret Manager supports IAM Conditions on resource attributes, `resource.name` is available for secrets and secret versions, and `startsWith()` is supported ([Secret Manager access control](https://docs.cloud.google.com/secret-manager/docs/access-control), [conditions attribute reference](https://docs.cloud.google.com/iam/docs/conditions-attribute-reference), **verified**). The exact `resource.name` format (project number or ID) and whether the condition must be checked against the version name as well are **(unverified)**: test it on the first secret. With a naming convention, the binding count is O(namespaces), and a new `ExternalSecret` under an existing prefix needs no IAM change.
+
+Terraform ownership (proposal, the plan does not fix it yet):
+
+- `landing-zone/gcp` owns the project, the Secret Manager API, the secret objects (no versions), the workload identity pools and the conditional IAM bindings. Everything there holds no value.
+- The Talos workload identity provider and its `jwks_json` also live in `landing-zone/gcp`, fed by a public JWKS file committed per cluster (for example `clusters/<name>/jwks.json`) that a `cluster:up` post-step reads from `/openid/v1/jwks`. This keeps the settled bootstrap boundary: the cluster root needs no Google credentials and no live kube API read, and GCP is not a dependency of cluster creation. The cost is a second apply (`landing-zone/gcp`) before ESO on a new Talos cluster turns `Ready`.
+- The alternative, the provider in the cluster root, saves that step but widens the bootstrap boundary (Google credentials and a post-bootstrap API read in every Talos `cluster:up`). See the open questions.
+- Versions are written by a person-only path, never by `landing-zone/gcp` or a cluster root (see below).
 
 Writing values: Proton Pass stays the human source of truth. A person-run task resolves `pass://` references with `pass-cli run` (the pattern `landing-zone/cloudflare` already uses) and writes a version:
 
@@ -88,22 +97,24 @@ Writing values: Proton Pass stays the human source of truth. A person-run task r
 | Criterion | Assessment |
 | --- | --- |
 | Public repo | **Nothing secret in Git**: only secret names, IAM bindings and the JWKS (public keys). No ciphertext to harvest. |
-| Agent isolation | Real control possible: the identity that writes versions holds `roles/secretmanager.secretVersionAdder` only, and is not the gcloud identity agents use. No human principal needs `secretAccessor`, since Proton Pass already holds the values. Risk: if the owner's daily gcloud ADC is project Owner, an agent can read every secret. The writer identity and the daily identity must differ. |
-| Write cost, N clusters | **Lowest.** One version write; every cluster picks it up within its `refreshInterval`. A new cluster needs IAM bindings, no value work. |
+| Agent isolation | **No better than A by default.** The write side can be a real control: the identity that writes versions holds `roles/secretmanager.secretVersionAdder` only and is not the gcloud identity agents use, and no human principal needs `secretAccessor`. The read side has three agent paths that this does not close: (1) the owner's daily gcloud ADC, if it is project Owner; (2) the `pass-cli` session, which holds every value; (3) on Talos, the service account signing key in the cluster Terraform state, which mints tokens that Google STS accepts from anywhere. See [Agent read paths](#agent-read-paths). B rates above A only once (2) and (3) are closed. |
+| Write cost, N clusters | **Lowest for values, moderate for IAM.** One version write; every cluster picks it up within its `refreshInterval`. IAM upkeep: O(secrets x namespaces x pools) bindings with per-secret grants, each new tenant secret an `infra` change and a person-run apply; O(namespaces) with prefix-conditioned grants. A new cluster needs a pool, a provider and bindings, no value work. |
 | kind | Poor fit. A kind cluster gets new service account signing keys at each creation **(unverified for kind; kubeadm generates them at init)**, so each create needs a JWKS upload, a network, and a GCP write by the person. The plan already gives kind an in-cluster store with dummy values; see option B-kind below. |
 | Bootstrap credential | **None on GKE.** None on Talos either: ESO uses projected service account tokens; the credential configuration is not secret. Terraform must upload the JWKS (public). |
 | Outage | Secret Manager or internet down: running pods keep their Secrets (in etcd); refreshes fail and `Ready` goes `False`; new namespaces and a rebuild during the outage cannot get values. A Pi cluster at home loses refresh during an ISP outage. |
 | DR / key loss | No key to lose: Google-managed encryption. Cluster loss: rebuild and re-bind IAM; values are untouched. Account or billing suspension, or project deletion: values gone from the backend; Proton Pass re-seeds them with one task run. |
 | Cost | See [Cost](#cost-of-gcp-secret-manager). About USD 2 to 3 per month at the expected size. |
-| Talos | Works through `workloadIdentityFederation`. The service account signing key is in `talos_machine_secrets.machine_secrets.certs.k8s_serviceaccount`, so it is in the Terraform state of the cluster (R2) ([provider docs](https://raw.githubusercontent.com/siderolabs/terraform-provider-talos/main/docs/resources/machine_secrets.md), **verified**). Rotating it requires a JWKS re-upload. See [Talos specifics](#talos-specifics). |
+| Talos | Works through `workloadIdentityFederation`. The service account signing key is in `talos_machine_secrets.machine_secrets.certs.k8s_serviceaccount`, so it is in the Terraform state of the cluster (R2) ([provider docs](https://raw.githubusercontent.com/siderolabs/terraform-provider-talos/main/docs/resources/machine_secrets.md), **verified**). Whoever reads that state can sign tokens for any namespace and read every secret granted in that pool, without touching the cluster. Rotating it requires a JWKS re-upload and is disruptive. See [Talos specifics](#talos-specifics). |
 | GKE | **Native.** No extra component, no Google service account needed. |
 | Complexity | Low: a GCP project, one workload identity pool, one provider per non-GKE cluster, IAM per secret. No stateful service to run. |
 
-Caveat on `property`: homelab's `ExternalSecret` objects set `property: value` because a seed holds a map. In Secret Manager a plain-text payload has no property. The `remoteRef` convention must be fixed per backend before tenants copy it. The fake provider ignores `property`, so a convention of "plain payload, no `property`" works on both B and B-kind.
+Caveat on `property`: homelab's `ExternalSecret` objects set `property: value` because a seed holds a map. In Secret Manager a plain-text payload has no property. The `remoteRef` convention must be fixed per backend before tenants copy it. The fake provider ignores `property` **(verified)**, so a convention of "plain payload, no `property`" should work on both B and B-kind. That `gcpsm` returns the whole payload when `property` is omitted is **(unverified)**: neither the [ESO GCP provider page](https://external-secrets.io/latest/provider/google-secrets-manager/) nor the [ExternalSecret API page](https://external-secrets.io/latest/api/externalsecret/) documents `property` for `gcpsm`. Test it before fixing the convention.
 
 ### B-kind. ESO fake provider for kind
 
 Not a full backend, but it answers the kind row of every option. The store `secrets` on kind uses `provider.fake.data` with obviously dummy values, rendered from the cluster overrides of `gitops/clusters/<kind-cluster>/cluster.yaml`. It works offline, needs no person, no seed namespace and no Terraform root. The values are public by design. The secret scanners must not flag them (use values like `dummy-not-a-secret`).
+
+Cross-repo coupling: the fake store returns only the keys it lists. A tenant `ExternalSecret` in `gsuquet/gitops` that references a key the kind store does not list stays `NotReady` on kind. Proposed convention: the tenant onboarding file `gitops/tenants/<tenant>.yaml` in `infra` lists the secret keys of each tenant namespace (names only), and the render generates one dummy entry per key in the kind store of that namespace. The same list can drive the prefix-conditioned IAM bindings of option B, so one list feeds both. A tenant adding a secret then needs an `infra` change, which keeps the platform in control of what a tenant can read.
 
 The Kubernetes provider with seeds (option A without SOPS) also works on kind, but needs a Terraform step or a manifest per seed and a beta provider for no gain.
 
@@ -177,11 +188,25 @@ Assessment: rejected. `alpha` providers, a static token per cluster, and none re
 
 This is B plus B-kind, with the write path from Proton Pass. It is the recommendation. It inherits the rows of B for Talos and GKE and the rows of B-kind for kind.
 
+## Agent read paths
+
+Agents run as the owner's OS user. A value is only as isolated as the weakest credential that user can reach. For B and G:
+
+| Path | Reach | Control that closes it |
+| --- | --- | --- |
+| Daily gcloud ADC with Owner (or any role with `secretmanager.versions.access`) on the secrets project | Every secret | Daily identity holds no Secret Manager role on that project; the writer identity holds `secretVersionAdder` only and needs an explicit step (separate account or impersonation). |
+| `pass-cli` session of the owner | Every value of every cluster (Proton Pass is the source of truth and the DR copy) | A dedicated Proton Pass vault for cluster values, opened by a separate login; re-authentication or biometric per use; a short session lifetime. Without these, `pass-cli` is an agent read path whatever the backend. **(unverified: which of these `pass-cli` supports; this study did not run it)** |
+| Talos cluster Terraform state (R2): service account signing key and admin kubeconfig | With the signing key, any namespace principal of the pool, from anywhere, through Google STS and the uploaded JWKS. With a shared pool, every Talos cluster of the pool. | One workload identity pool per Talos cluster (limits the blast radius to one cluster). Keep agents away from the state of production Talos roots: a state credential agents do not hold, `cluster:up`/`plan` for production run by a person only, or a signing key generated outside Terraform and injected without a state copy. |
+| kubeconfig that reads Secrets | Values of that cluster, from a network that reaches its API server | Same for every option. |
+
+Option A has the same `pass-cli` path (values come from Proton Pass there too), and on Talos the same state holds the admin kubeconfig. The difference is reach: with A, a leaked Talos state reads values only from a network that reaches the API server; with B, the signing key works from anywhere through STS. So A and B rate the same on agent isolation until the `pass-cli` and Talos state paths are closed, and B rates higher only after that.
+
 ## Talos specifics
 
-- The service account signing key comes from `talos_machine_secrets` (`certs.k8s_serviceaccount`) and is stored, with every other cluster secret, in the Terraform state of the cluster root (R2) **(verified, provider schema)**. That state is already sensitive regardless of the secrets backend. The machine config field is `cluster.serviceAccount.key`, "the base64 encoded private key for service account token generation" ([Talos config reference](https://docs.siderolabs.com/talos/v1.11/reference/configuration/v1alpha1/config), **verified**).
+- The service account signing key comes from `talos_machine_secrets` (`certs.k8s_serviceaccount`) and is stored, with every other cluster secret, in the Terraform state of the cluster root (R2) **(verified, provider schema)**. That state is already sensitive regardless of the secrets backend, but option B turns the signing key into an off-cluster credential for Secret Manager (see [Agent read paths](#agent-read-paths)). The machine config field is `cluster.serviceAccount`, a single `PEMEncodedKey`, "the base64 encoded private key for service account token generation" ([Talos v1.12 config reference](https://docs.siderolabs.com/talos/v1.12/reference/configuration/v1alpha1/config), **verified**; same in [v1.11](https://docs.siderolabs.com/talos/v1.11/reference/configuration/v1alpha1/config)). The Talos study targets Talos 1.14; the v1.14 reference page did not show the field when fetched, so the 1.14 shape is **(unverified)**. Update these links when the Talos pin is set.
 - `talosctl rotate-ca` rotates the Talos API CA and the Kubernetes API CA only. The [CA rotation page](https://docs.siderolabs.com/talos/v1.11/security/ca-rotation) says "Other Kubernetes secrets might need to be rotated manually as required" **(verified)**. Whether that covers the service account key is not stated **(unverified)**; assume a manual machine config change.
-- The JWKS changes only when that key changes. The cluster root can read `/openid/v1/jwks` after bootstrap and set `jwks_json` on its workload identity provider, so a key rotation becomes: change the key, apply, re-read the JWKS, apply the provider. During the rotation both old and new keys must be in the uploaded JWKS, or tokens signed by the other key fail at STS **(design note, unverified on Talos)**. ESO tokens are short-lived, so the overlap window is short.
+- The JWKS changes only when that key changes. A `cluster:up` post-step can read `/openid/v1/jwks` and commit it as public data for `landing-zone/gcp` to set `jwks_json` (see [Terraform ownership](#b-gcp-secret-manager-single-store-for-all-clusters-eso-gcpsm)).
+- **Rotation is disruptive, all at once.** Because the Talos config carries one service account key, the API server most likely verifies only tokens signed by the current key after the switch, so every projected token in the cluster (every pod, not only ESO) becomes invalid until kubelet refreshes it, and long-lived token Secrets stop working. A two-key overlap would need extra API server flags and files outside `cluster.serviceAccount` **(unverified on Talos)**. Plan a rotation as a maintenance event: change the key, apply, re-read and re-upload the JWKS, apply `landing-zone/gcp`, and restart workloads that cache tokens. Uploading old and new keys to the JWKS during the switch is harmless and avoids STS failures for tokens issued just before it.
 - The issuer need not be public (`--jwk-json-path` / `jwks_json`). It must match the `iss` claim of the tokens exactly. The Talos default issuer is the cluster endpoint **(unverified)**.
 - Talos generates encryption-at-rest secrets for etcd (`secretbox_encryption_secret`, `aescbc_encryption_secret` in `talos_machine_secrets`, **verified**). Encryption at rest being on by default is **(unverified)**.
 
@@ -190,11 +215,11 @@ This is B plus B-kind, with the write path from Proton Pass. It is the recommend
 - Workload Identity Federation for GKE gives each namespace/KSA pair a principal without a Google service account **(verified)**.
 - All GKE clusters in one project share the pool `PROJECT_ID.svc.id.goog`, so namespace `foo` / KSA `bar` is the same principal on every GKE cluster of that project **(verified, by the principal format)**. If two GKE clusters must not share a secret, put them in different projects or use per-cluster secret names and accept that IAM cannot tell them apart.
 - On Standard clusters, pods need nodes with the GKE metadata server enabled; Autopilot handles it **(verified)**.
-- The same applies to Talos clusters that share a pool: the `principal://` identifier names the pool and the subject, not the provider **(verified, by the principal format)**. With `google.subject=assertion.sub` alone, `system:serviceaccount:foo:bar` is the same principal on every Talos cluster of the pool. Use one pool per cluster, or a subject mapping that prefixes the cluster name **(design note)**.
+- The same applies to Talos clusters that share a pool: the `principal://` identifier names the pool and the subject, not the provider **(verified, by the principal format)**. With `google.subject=assertion.sub` alone, `system:serviceaccount:foo:bar` is the same principal on every Talos cluster of the pool. Default: **one pool per Talos cluster**. In a shared pool with `google.subject=assertion.sub`, a leaked signing key of one cluster mints principals that every Talos cluster of the pool shares, so it reads the secrets of all of them. A subject mapping that prefixes the cluster name (a constant per provider) avoids that, but one wrong mapping re-opens it silently. Separate pools limit a leaked key to one cluster by construction **(design note)**.
 
 ## Cost of GCP Secret Manager
 
-From the [pricing page](https://cloud.google.com/secret-manager/pricing), read on 2026-11-18 **(verified)**:
+From the [pricing page](https://cloud.google.com/secret-manager/pricing), read on 2026-11-18 **(unverified)**: the page is rendered by JavaScript and a plain fetch returns only its title, so these numbers could not be reproduced by a second reader. Check them in a browser before relying on them.
 
 | Item | Free tier (per month, per account) | Price above the free tier |
 | --- | --- | --- |
@@ -206,7 +231,7 @@ From the [pricing page](https://cloud.google.com/secret-manager/pricing), read o
 
 Whether a version replicated to several locations counts once or once per location is **(unverified)**: the page example does not show it. Whether "account" means billing account is **(unverified)**.
 
-Estimate for 40 secrets, one enabled version each (older versions destroyed), 3 non-kind clusters, every value read by every cluster, `refreshInterval: 1h`:
+Estimate for 40 secrets with user-managed replication in a single location, one enabled version each (older versions destroyed), 3 non-kind clusters, every value read by every cluster, `refreshInterval: 1h`. If versions are billed per replica location, automatic or multi-location replication multiplies the version cost by the number of locations:
 
 - Versions: (40 - 6) x 0.06 = USD 2.04 per month.
 - Accesses: 40 x 3 x 24 x 30 = 86,400 per month, so (86,400 - 10,000) / 10,000 x 0.03 = about USD 0.23 per month. One access per refresh per `ExternalSecret` is an assumption **(unverified)**.
@@ -216,19 +241,19 @@ Disabled (not destroyed) versions likely still count as active **(unverified)**;
 
 ## Comparison table
 
-Legend: ++ best, + good, 0 neutral, - poor, -- blocking.
+Legend: ++ best, + good, 0 neutral, - poor, -- blocking. The `pass-cli` read path applies to every option whose values come from Proton Pass, so the agent isolation row scores the other paths; no option is better than `0` there until the `pass-cli` session is protected.
 
 | Criterion | A. SOPS + seeds | B. GCP SM | B-kind. fake | C. Sealed | D. SOPS in cluster | E. OpenBao | F. SaaS |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Public repo (nothing to harvest) | - | ++ | 0 (dummies) | - | - | ++ | ++ |
-| Agent isolation (distinct identity) | 0 | + | n/a | 0 | 0 | + | + |
-| Write cost for N clusters | -- | ++ | n/a | -- | 0 | ++ | ++ |
+| Agent isolation (no agent read path, `pass-cli` path aside) | 0 | 0 on Talos (+ once agents cannot read Talos state), + on GKE | n/a | 0 | 0 | + | + |
+| Write cost for N clusters (values and IAM) | -- | + (++ with prefix-conditioned IAM) | n/a | -- | 0 | ++ | ++ |
 | kind, offline and unattended | - | -- | ++ | - | - | -- | -- |
 | No bootstrap credential per cluster | + | ++ | ++ | 0 | - | 0 | - |
 | Outage resilience | ++ | 0 | ++ | ++ | ++ | - | 0 |
 | DR and key loss | 0 | + | ++ | - | - | - | + |
 | Cost | ++ | + (about USD 2-3/month) | ++ | ++ | ++ | - | 0 |
-| Talos fit | + | + (JWKS on rotation) | n/a | + | 0 | 0 | 0 |
+| Talos fit | + | 0 (disruptive key rotation, JWKS re-upload, signing key in state) | n/a | + | 0 | 0 | 0 |
 | GKE fit | 0 | ++ | n/a | 0 | 0 | - | 0 |
 | Operational complexity | - | + | ++ | 0 | - | -- | 0 |
 | Keeps ESO store `secrets` contract | yes | yes | yes | no | KSOPS no / operator no | yes | yes |
@@ -238,12 +263,14 @@ Legend: ++ best, + good, 0 neutral, - poor, -- blocking.
 
 Option G:
 
-1. **GCP Secret Manager is the single backend for every non-kind cluster** (Talos and GKE), through ESO `gcpsm` and the per-namespace store `secrets`. GKE uses `workloadIdentity`; Talos uses `workloadIdentityFederation` with the JWKS uploaded by the cluster Terraform root (`jwks_json`). IAM grants `secretAccessor` per secret to per-namespace principals.
-2. **kind uses the ESO fake provider** with dummy values under the same store name. No credential, no network, no person.
-3. **Proton Pass stays the only human store.** A person-run task (`pass-cli run`, never run by agents) writes versions to Secret Manager with a write-only argument or a pipe, through an identity that holds only `secretVersionAdder` and that agents do not use.
-4. **No ciphertext in Git.** No SOPS file, no `SealedSecret`. The age and SOPS tooling of homelab is not carried over.
+1. **GCP Secret Manager is the single backend for every non-kind cluster** (Talos and GKE), through ESO `gcpsm` and the per-namespace store `secrets`. GKE uses `workloadIdentity`; Talos uses `workloadIdentityFederation` with **one workload identity pool per Talos cluster** and its public JWKS set by `landing-zone/gcp` (`jwks_json`), so the cluster root keeps the settled bootstrap boundary. IAM grants `secretAccessor` once per namespace principal, conditioned on a secret name prefix.
+2. **kind uses the ESO fake provider** with dummy values under the same store name, one entry per secret key listed in the tenant or component definition. No credential, no network, no person.
+3. **Proton Pass stays the only human store.** A person-run task (`pass-cli run`, never run by agents) writes versions to Secret Manager with a write-only argument or a pipe, through an identity that holds only `secretVersionAdder` and that agents do not use. Cluster values live in a dedicated Proton Pass vault behind a separate login with re-authentication per use, so the agent's OS user has no open session on them.
+4. **Agents cannot read production Talos state.** The R2 state of production Talos roots holds the service account signing key; its credential is not reachable by agents, and `cluster:up`/`plan` for those roots is person-run. Until this holds, option B is no better than A on agent isolation.
+5. **The platform owns the stores.** Tenants cannot create `SecretStore`, `ClusterSecretStore` or `PushSecret`; see ADR 0020 Confirmation.
+6. **No ciphertext in Git.** No SOPS file, no `SealedSecret`. The age and SOPS tooling of homelab is not carried over.
 
-Why: one write per change whatever N is; no secret zero on any cluster; nothing harvestable in the public repos; the store contract and the rendered manifests pattern stay intact; the cost is a few dollars a month; and Proton Pass covers DR of the values. The price is a cloud dependency for Pi clusters at refresh time and a JWKS step on Talos key rotation.
+Why: one value write per change whatever N is, and O(namespaces) IAM bindings; no secret zero on any cluster; nothing harvestable in the public repos; the store contract and the rendered manifests pattern stay intact; the cost is a few dollars a month (pricing unverified); and Proton Pass covers DR of the values. The price is a cloud dependency for Pi clusters at refresh time, a disruptive service account key rotation on Talos, and two access controls (Proton Pass session, Talos state) that must exist for the isolation argument to hold.
 
 Fallback if the owner rejects any cloud dependency for the Pi clusters: option A for Talos only (one SOPS file per cluster), with B-kind on kind and B on GKE. The ESO store contract makes that a per-cluster choice.
 
@@ -251,11 +278,15 @@ Fallback if the owner rejects any cloud dependency for the Pi clusters: option A
 
 1. Is a GCP dependency acceptable at refresh time for the Pi clusters (home ISP outage = no refresh, no rebuild)?
 2. One GCP project for secrets of all clusters, or one per environment (prod / non-prod)? This also decides whether GKE clusters share a workload identity pool.
-3. Workload identity pools: one per Talos cluster, or one shared pool with a cluster attribute in the subject mapping?
+3. Workload identity pools: one per Talos cluster (recommended default), or one shared pool with a cluster attribute in the subject mapping?
 4. Secret naming in Secret Manager: per cluster (`<cluster>--<namespace>--<name>`), shared (`<namespace>--<name>`), or both? This decides whether one write updates every cluster.
 5. Write path: Terraform write-only (`secret_data_wo`, a version counter in Git, a person-only root) or a `gcloud ... --data-file=-` pipe from `pass-cli` (no state at all)?
 6. Which identity writes versions? A separate Google account, or impersonation of a writer service account that the daily gcloud configuration cannot use without an explicit step?
 7. `remoteRef` convention: plain-text payloads with no `property` (works with fake and `gcpsm`), or JSON payloads with `property: value` (keeps homelab objects)?
 8. `refreshInterval` default: 1h (faster rotation) or 24h (lower cost, less traffic)?
-9. Tenants in `gsuquet/gitops`: may a tenant `ExternalSecret` read only secrets prefixed with its tenant name, enforced by IAM on its namespace principals? Who writes tenant values?
+9. Tenants in `gsuquet/gitops`: may a tenant `ExternalSecret` read only secrets prefixed with its tenant name, enforced by prefix-conditioned IAM on its namespace principals? Who writes tenant values? Does the tenant file in `infra` list secret keys (feeding kind dummies and IAM)?
 10. Is option A acceptable as the documented fallback for an offline-only cluster, or is it dropped entirely?
+11. Talos state isolation: how are agents kept away from the signing key in production Talos state? A separate R2 credential agents do not hold, person-only `cluster:up`/`plan` for production roots, or a signing key generated outside Terraform? Without one of these, option B gives agents an off-cluster read path to Secret Manager.
+12. Proton Pass session: a dedicated vault for cluster values with a separate login, re-authentication per use, and a session lifetime? Without it, `pass-cli` is an agent read path for every option.
+13. Bootstrap boundary: does the Talos workload identity provider and its JWKS live in `landing-zone/gcp` (fed by a committed public JWKS, recommended), or in the cluster root (which then needs Google credentials and a post-bootstrap API read in every `cluster:up`)?
+14. Tenant enforcement in `gsuquet/gitops`: Conftest in that repo's CI, an admission policy in each cluster, or both?
