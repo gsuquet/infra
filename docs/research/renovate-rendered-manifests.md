@@ -27,10 +27,10 @@ person pushes the render commit, Renovate stops updating the branch (see [option
 
 | Constraint | Consequence |
 | --- | --- |
-| Public repo, CI must hold no secret ([ADR-0019](../adr/0019-lifecycle-tasks-and-ci-scope.md) driver: "No credential in CI for this public repository"). | Any option that needs a write token in infra's CI goes against an accepted ADR. |
+| Public repo, CI must hold no secret ([ADR-0019](../adr/0019-lifecycle-tasks-and-ci-scope.md) driver: "No credential in CI for this public repository"; the ADR lands with PR #5, so this link resolves once that PR is merged). | Any option that needs a write token in infra's CI goes against an accepted ADR. |
 | The owner self-hosts Renovate: `gsuquet/renovate-bot` runs `renovatebot/github-action` on a schedule with a GitHub App token, `autodiscover` over `gsuquet/*`, `platformCommit: enabled`, image `ghcr.io/renovatebot/renovate:41.115.2`. | Global (admin-only) options such as `allowedCommands` are in the owner's hands. |
 | Humans merge every PR. | No automerge, no `ignoreTests`. A red PR is acceptable only if the fix is obvious. |
-| The render is a mise task with tool versions pinned in `.mise/config.toml` + `mise.lock`. | Whatever renders must run the same task with the same tools, or the output differs and `manifests:check` fails. |
+| The render is a mise task with tool versions pinned in `.mise/config.toml` + `.mise/mise.lock`. | Whatever renders must run the same task with the same tools, or the output differs and `manifests:check` fails. |
 | Tool, action and Terraform provider bumps do not touch `gitops/`, except render tools in `.mise/config.toml`. | Only some update kinds need a render. |
 
 ## Which Renovate managers see our component format
@@ -96,7 +96,13 @@ Facts:
   44.239.1 source, `execute-post-upgrade-commands.js`, **verified**). So no `&&`: one command per list entry.
 - `executionMode: branch` runs the set once per branch instead of once per update
   ([executionMode](https://docs.renovatebot.com/configuration-options/#postupgradetasksexecutionmode), **verified**).
-  A grouped PR renders once.
+  A grouped PR renders once. Caveat (44.239.1 source, **verified**): branch-mode tasks come from the *branch* config,
+  which `workers/repository/updates/generate.js` builds as `{ ...config, ...config.upgrades[0] }` after sorting the
+  upgrades by `fileReplacePosition`, then `depName`. `execute-post-upgrade-commands.js` then reads
+  `config.postUpgradeTasks` from that branch config. So a branch-mode task runs only if the *first* upgrade after
+  sorting carries it. In a group that mixes matching and non-matching upgrades (for example `dev tools` with
+  `actions/checkout` and a `helm` mise bump), the task silently never runs and the PR goes red. Rule: attach
+  branch-mode tasks only to rules that match every upgrade of the branch.
 - `fileFilters` default to `**/*` ([fileFilters](https://docs.renovatebot.com/configuration-options/#postupgradetasksfilefilters),
   **verified**). Deleted files are committed when they match `fileFilters` (44.239.1 source, **verified**), so a
   chart that drops a resource removes its rendered file.
@@ -106,8 +112,12 @@ Facts:
   effect with `binarySource=global` ([installTools](https://docs.renovatebot.com/configuration-options/#postupgradetasksinstalltools),
   **verified**).
 - Renovate passes only a limited set of environment variables to child processes unless `exposeAllEnv` is set
-  ([exposeAllEnv](https://docs.renovatebot.com/self-hosted-configuration/#exposeallenv), **verified**).
-- Refreshing `mise.lock` after a mise tool bump needs `mise` in the global `allowedUnsafeExecutions`
+  ([exposeAllEnv](https://docs.renovatebot.com/self-hosted-configuration/#exposeallenv), **verified**; the list is
+  `basicEnvVars` in `util/exec/env.js`: proxies, `HOME`, `PATH`, locale, CA and Corepack variables, no token).
+  The environment is not where the token is, though: see the first cost below.
+- Commands run with `cwd` set to the repository clone (`execute-post-upgrade-commands.js`, `cwd: workingDir`,
+  44.239.1 source, **verified**).
+- Refreshing `.mise/mise.lock` after a mise tool bump needs `mise` in the global `allowedUnsafeExecutions`
   ([mise manager](https://docs.renovatebot.com/modules/manager/mise/), **verified**). The validator of Renovate
   41.115.2 (the runner's version) rejects `allowedUnsafeExecutions`; 44.239.1 accepts it (local run, **verified**).
   This affects infra today, render or not: `.mise/config.toml` sets `lockfile = true`.
@@ -117,15 +127,37 @@ commit, no "modified branch", no loop, and no token in infra's CI.
 
 Costs:
 
-- The runner must be able to run the render: mise, then every tool the render needs (helm, yq, ...) from
-  `mise.lock`, with network access to the chart repositories. The first run downloads all tools; later runs depend
-  on the runner cache **(unverified)**.
-- `allowedCommands` is global for every `gsuquet/*` repo the runner autodiscovers: any of them that defines
-  `manifests:render` gets it run with the runner's privileges. All are the owner's repos, but the render executes
-  repo-defined scripts and third-party binaries in the process that holds the Renovate App token. The token is not
-  in the child environment by default (above), but a process of the same user may still read the parent's
-  environment through `/proc` **(unverified for the GitHub Actions container)**. `minimumReleaseAge: 3 days` and
-  `mise.lock` checksums reduce the risk of a poisoned tool.
+- **The Renovate token is readable by every post-upgrade command** (44.239.1 source, **verified**).
+  `modules/platform/github/utils.js` `getRepoUrl` builds the clone URL with `username = "x-access-token"` and
+  `password = <token>`; `util/git/index.js` clones with that URL (or `git remote set-url origin` on a reused
+  clone). The token therefore sits in `.git/config` of the working directory, which is the commands' `cwd`. One
+  `cat .git/config` from `mise run manifests:render`, from any mise-installed binary, or from a mise hook or env
+  template (trusted by `mise trust --yes`) reads it. Today `gsuquet/renovate-bot` mints that token with
+  `owner: gsuquet` and no `repositories` input (`.github/workflows/renovate.yaml`, **verified**), so it is valid
+  for every repository of the installation, likely including `gsuquet/renovate-bot` itself, which holds
+  `RENOVATE_PRIVATE_KEY` **(installation scope and App permissions unverified: they need the App settings page)**.
+  If the App has `workflows: write` (Renovate needs it to bump actions in workflow files **(unverified)**), a
+  malicious render could push a workflow to `renovate-bot` that exfiltrates the App key.
+- Consequence: the anchored `allowedCommands` list is **not a security boundary**. It limits which argv Renovate
+  spawns, but `mise run manifests:render` runs whatever the branch's task files say, and `mise install` runs
+  whatever the branch's `.mise/config.toml` pins. The only effective controls are the token's scope and what code
+  lands on the branch (`minimumReleaseAge: 3 days`, `.mise/mise.lock` checksums, review of task changes on `main`).
+  The recommended design below therefore isolates infra in its own runner job with a single-repo token.
+- The runner is an ephemeral `ubuntu-latest` job running the Renovate container: there is no cross-run cache.
+  Every run downloads mise, every render tool and every chart again unless the workflow adds `actions/cache` for
+  the mise and Containerbase directories mounted into the container **(cache paths unverified)**.
+- `mise install` inside the container has no GitHub token (filtered env, above). mise's GitHub-hosted backends
+  (`github:`, `aqua:`, `ubi:`) then use the unauthenticated GitHub API limit of 60 requests per hour per IP, shared
+  with every job on the same runner IP **(mise behaviour unverified)**. Expect intermittent artifact errors. The
+  fix is a read-only, single-repo token passed through the global `customEnvVariables` (for example as
+  `MISE_GITHUB_TOKEN`); with the isolation below it can be the infra job's own token, which is no worse than what
+  `.git/config` already exposes.
+- Large renders (CRDs for N clusters) go through `platformCommit`. In 44.239.1 that path does not send file
+  contents through GraphQL: it pushes the git objects to `refs/renovate/branches/<branch>` with `git push`, then
+  creates the tree with REST `POST /git/trees` from `git diff-tree` entries (blob SHAs only) and the commit with
+  `POST /git/commits` (`modules/platform/github/index.js` `pushFiles`, **verified**). Payload size is then bounded
+  by the number of changed files, not their size; a limit on tree entries per request is **unverified**. A pilot
+  step covers it.
 - Debugging happens in the runner logs of `gsuquet/renovate-bot`, not in infra.
 
 ### B. GitHub Actions workflow pushes the render to the Renovate branch
@@ -191,14 +223,39 @@ as the fallback when option A reports an artifact error.
 | Renovate keeps rebasing | yes | only with `gitIgnoredAuthors` | no | n/a |
 | Loop risk | none | must be designed out | none | none |
 | Covers mise / actions / Terraform | yes (Renovate) | yes (Renovate) | yes | no |
-| Changes outside infra | runner: `allowedCommands`, `allowedUnsafeExecutions`, version bump | new App | none | Kargo install |
+| Branch code runs next to a write token | yes: infra-only token (with the isolation below); every `gsuquet/*` repo without it | no: job 2 never runs branch code | on the person's machine | n/a |
+| Changes outside infra | runner: separate infra job, `allowedCommands`, `allowedUnsafeExecutions`, version bump | new App | none | Kargo install |
 | Human work per chart PR | review | review | render + push + review | review |
+
+Re-weighing with the token exposure: without isolation, A is worse than B (branch code can reach a token valid for
+every repo, the runner's own included). With a dedicated job and a token minted for infra only, the blast radius
+of A is "write to infra", the same as B's App token, but reached through branch code instead of a job that never
+runs it. B keeps a cleaner boundary; A keeps the render in Renovate's own commit (no modified branch, no second
+CI cycle, no write secret in infra's Actions). A malicious render that can write to infra could already change what
+infra deploys through the PR it renders, so the extra risk of A over B is small once the token is single-repo, as
+long as `main` is protected by a ruleset (open question 7). A stays recommended, conditional on the isolation.
 
 ## Recommended design
 
-Option A, with C as the fallback.
+Option A, with C as the fallback, and **only with the runner isolation below**. Without it, choose B.
 
-Runner (`gsuquet/renovate-bot`, global config):
+Runner (`gsuquet/renovate-bot`):
+
+1. Split the workflow into two jobs (same `concurrency` group so they do not overlap):
+   - `renovate`: current job, current global config, plus `"autodiscoverFilter": ["gsuquet/*", "!gsuquet/infra"]`
+     (negative patterns are supported by `matchRegexOrGlobList`, `util/string-match.js`, 44.239.1 source,
+     **verified**). No `allowedCommands`.
+   - `renovate-infra`: mints its App token with `actions/create-github-app-token` `owner: gsuquet` and
+     `repositories: infra`, so the token cannot reach any other repo, `renovate-bot` included (input documented
+     by the action **(unverified, the action README is outside the allowed domains)**). Runs Renovate with
+     `autodiscover: false`, `repositories: ["gsuquet/infra"]`, and a second global config file that alone carries
+     the options below.
+2. Check the App's permissions and installation scope, notably `workflows: write` and whether `renovate-bot` is
+   in the installation **(unverified)**.
+3. Add `actions/cache` for the mise and Containerbase directories mounted into the container, keyed on
+   `.mise/mise.lock` (paths **unverified**).
+
+`renovate-infra` global config:
 
 ```json
 {
@@ -207,10 +264,15 @@ Runner (`gsuquet/renovate-bot`, global config):
     "^mise install$",
     "^mise run manifests:render$"
   ],
-  "allowedUnsafeExecutions": ["mise"]
+  "allowedUnsafeExecutions": ["mise"],
+  "customEnvVariables": { "MISE_GITHUB_TOKEN": "{{ the infra job's token }}" }
 }
 ```
 
+- The anchors only keep stray commands out; they are not a security control (see option A costs).
+- `customEnvVariables` is global-only (44.239.1 `config/options`, **verified**). The token value is set from the
+  workflow (environment variable or generated config file), never committed. The exact wiring through
+  `renovatebot/github-action` is **unverified**; the env var name mise reads is **unverified**.
 - Bump the runner from 41.115.2 to a version that accepts `allowedUnsafeExecutions` (44.239.1 does, **verified**;
   the first version that does is **unverified**). Pin it like everything else.
 - Keep `binarySource=install` (default) so `installTools` works.
@@ -219,11 +281,44 @@ Repo (`.github/renovate.json`), on top of what exists:
 
 ```json
 {
-  "ignorePaths": ["gitops/clusters/*/rendered/**"],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/__fixtures__/**",
+    "gitops/clusters/*/rendered/**"
+  ],
   "packageRules": [
     {
-      "description": "Updates that can change the render output re-render in the same commit",
-      "matchFileNames": ["gitops/components/**", ".mise/config.toml"],
+      "description": "Render tools get their own group, so every upgrade of that branch carries the render task",
+      "groupName": "render tools",
+      "groupSlug": "render-tools",
+      "matchDepNames": ["helm", "kustomize", "yq"],
+      "matchManagers": ["mise"],
+      "semanticCommitScope": "tools"
+    },
+    {
+      "description": "Branches whose every upgrade can change the render output re-render in the same commit",
+      "matchFileNames": ["gitops/components/**"],
+      "postUpgradeTasks": {
+        "installTools": { "mise": {} },
+        "commands": [
+          "mise trust --yes .mise/config.toml",
+          "mise install",
+          "mise run manifests:render"
+        ],
+        "fileFilters": ["gitops/clusters/*/rendered/**"],
+        "executionMode": "branch"
+      }
+    },
+    {
+      "description": "Same task for the render tools group",
+      "matchDepNames": ["helm", "kustomize", "yq"],
+      "matchManagers": ["mise"],
       "postUpgradeTasks": {
         "installTools": { "mise": {} },
         "commands": [
@@ -239,15 +334,24 @@ Repo (`.github/renovate.json`), on top of what exists:
 }
 ```
 
-This repo snippet passes `renovate-config-validator --strict` 44.239.1 **(verified)**. The full flow (tools install, render, commit of added and deleted files) is
-**unverified** until a pilot run.
+This repo snippet passes `renovate-config-validator --strict` 44.239.1 **(verified)**. The full flow (tools install,
+render, commit of added and deleted files) is **unverified** until a pilot run.
 
+- `ignorePaths` is `mergeable: false` (44.239.1 `config/options`, **verified**): a repo value replaces the list
+  from `config:best-practices` (`:ignoreModulesAndTests`) instead of extending it. The snippet repeats the preset's
+  paths (44.239.1 `default.preset.js`, **verified**) so test and fixture directories stay ignored. Re-check the
+  list when the preset changes.
+- Every branch that gets the task must consist only of matching upgrades (see the `executionMode` caveat). The
+  `render tools` group takes helm, kustomize and yq out of `dev tools` (the later rule wins for `groupName`), so
+  `dev tools` never needs a render and `render tools` always gets one. Chart groups are scoped to
+  `gitops/components/<name>/**` (see [Grouping](#grouping)), so every upgrade in them matches the first task rule.
+  Do not add a group that mixes component files with anything else.
+- The `matchDepNames` list must follow the tools the render actually uses; add a tool there when the render task
+  starts using it.
 - `fileFilters` limits the commit to rendered files: a render that rewrites anything else is dropped, and
   `manifests:check` catches it.
 - Rendering every cluster is fine: the render is deterministic and the check renders everything anyway.
-- `.mise/config.toml` is in the match because a helm or yq bump can change the output. It puts the render task on
-  the `dev tools` group branch too.
-- Terraform providers and GitHub Actions do not render.
+- Terraform providers, GitHub Actions and the other `dev tools` do not render.
 
 ### Grouping
 
@@ -269,11 +373,17 @@ a second PR for the same component and the two can drift.
 
 ### Pilot
 
-1. Bump the runner and add the global options.
+1. Bump the runner, split out the `renovate-infra` job with its single-repo token, and add the global options to
+   that job only. Check from a throwaway task that the token in `.git/config` is rejected by another repo.
 2. Add the repo rules once the render task and one component exist.
 3. Force a chart bump with a manual run (`workflow_dispatch`, `dry_run: off`) and check: tools installed, render
    committed in Renovate's commit, deleted files removed, `manifests:check` green.
-4. Check the Renovate commit is still signed (`platformCommit: enabled`) with the rendered files in it.
+4. Force a mixed weekly run: a `helm` (render tools) bump together with an `actions/checkout` (dev tools) bump.
+   Check that `render tools` re-renders and `dev tools` carries no render.
+5. Force a large bump that rewrites CRDs in every cluster (for example cert-manager or Argo CD across a major
+   version) and check the platform commit goes through.
+6. Check the Renovate commit is still signed (`platformCommit: enabled`) with the rendered files in it, and that
+   two consecutive runs hit the cache and no GitHub rate limit.
 
 ## Local checks
 
@@ -288,12 +398,14 @@ Done for this study, with the Renovate binaries in the pre-commit cache:
 
 1. Component shape: umbrella `Chart.yaml` (recommended, native `helmv3`) or a custom `component.yaml` with a regex
    manager? This also settles whether `Chart.lock` is committed.
-2. Is running repo-defined render code inside the Renovate runner, which holds an App token for every `gsuquet/*`
-   repo, acceptable? Alternatives: narrow the App installation, or a separate runner job for infra only.
+2. Is "branch code can write to infra" acceptable with the single-repo token (option A), or is B's stricter
+   boundary worth a write secret in infra's Actions and a second CI cycle per push? Either way, confirm the App's
+   permissions (`workflows: write`?) and whether `gsuquet/renovate-bot` is in its installation.
 3. Bump the runner from 41.115.2 now? `mise.lock` refresh needs it regardless of this study.
 4. Pin image tags in component default values, or let charts own them?
 5. Forbid chart and image version overrides in `cluster.yaml` (schema rule), so one version lives in the catalog?
 6. Should the Kargo pipeline for tenants (render -> PR to `gsuquet/gitops`) reuse the same render task, so one
    implementation renders both?
 7. Should `manifests:check` become a required status check on `main` (no ruleset exists today)? Without it a stale
-   render can be merged by mistake.
+   render can be merged by mistake. A ruleset on `main` also stops the infra-scoped Renovate token (readable by the
+   render, see option A) from pushing to `main` directly.
