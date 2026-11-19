@@ -1,0 +1,14 @@
+---
+apiVersion: infra.gsuquet.com/v1alpha1
+kind: Tenant
+name: team-a
+description: Example tenant.
+namespaces:
+  - team-a
+limits:
+  defaultRequest:
+    cpu: 100m
+    memory: 128Mi
+  default:
+    cpu: 500m
+    memory: 512Mi

@@ -1,0 +1,11 @@
+{{- /* Rendered only when the cluster declares the API (cluster.yaml apiVersions), like a ServiceMonitor or an HTTPRoute in upstream charts. */ -}}
+{{- if .Capabilities.APIVersions.Has "example.com/v1alpha1/Greeting" }}
+apiVersion: example.com/v1alpha1
+kind: Greeting
+metadata:
+  name: {{ .Release.Name }}-gated
+  namespace: {{ .Release.Namespace }}
+spec:
+  message: {{ .Values.greeting | quote }}
+  replicas: 1
+{{- end }}
