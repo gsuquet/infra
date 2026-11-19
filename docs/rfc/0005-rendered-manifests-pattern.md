@@ -109,7 +109,7 @@ From chart to cluster: the render output is what reviewers, checks and Argo CD a
 - Rollout: render and commit per pull request; Argo CD syncs after merge.
 - Rollback: revert the commit; Argo CD syncs the previous files (one sync interval).
 - Migration: None: no cluster renders at sync time today.
-- Security: rendered output is public: secret material rendered at template time would be published; betterleaks and a Conftest rule on `Secret` `data`/`stringData` block it.
+- Security: rendered output is public: secret material rendered at template time would be published; betterleaks scans it in pre-commit; a Conftest rule on `Secret` `data`/`stringData` is still to add.
 - Cost: N/A: CI and repository size only.
 - Observability: `mise run manifests:check` fails a pull request whose committed files differ from a fresh render; Argo CD sync status per `Application`.
 
@@ -135,7 +135,7 @@ None.
   - Bad: output lands in public repositories: a chart rendering secret material at template time publishes it and breaks `manifests:check`.
   - Bad: Argo CD cannot tell a Helm install from an upgrade: `pre-install` hooks run on every sync.
 - Confidence: high, the pattern ran in `homelab` and the tooling exists in `infra`.
-- Confirmation: CI runs `mise run manifests:check` (two renders must match the committed files), betterleaks over `rendered/`, and the Conftest rule that fails any `Secret` with `data` or `stringData`; no Argo CD `Application` in `rendered/` has a `helm` source.
+- Confirmation: CI runs `mise run manifests:check` (two renders must match the committed files), betterleaks and the CRD sync wave `-1` set by the render (on `main`); targets still to add: a Conftest rule that fails any `Secret` with `data` or `stringData`, one that fails an Argo CD `Application` in `rendered/` with a `helm` source, and sync wave `1` or higher on child `Application` resources.
 - Revisit when: rendered output makes the repository or pull request diffs too large to review, or Argo CD gains a reviewable render-at-sync mode.
 
 ## Implementation
@@ -151,4 +151,5 @@ None.
 
 ## Future work
 
-N/A: no follow-up raised.
+- Conftest rules for `Secret` with `data` or `stringData` and for `Application` with a `helm` source.
+- Sync wave `1` or higher on child `Application` resources in the render.

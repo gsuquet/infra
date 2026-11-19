@@ -8,7 +8,7 @@ author: gsuquet
 deciders: gsuquet
 created: 2026-11-18
 updated: 2026-11-19
-review: https://github.com/gsuquet/infra/pull/5
+review: https://github.com/gsuquet/infra/pull/18
 adr: docs/adr/0001-record-decisions-with-madr.md
 supersedes: null
 superseded-by: null

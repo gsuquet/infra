@@ -4,7 +4,7 @@ title: Record decisions as RFCs with generated ADRs
 status: accepted
 date: 2026-11-19
 rfc: docs/rfc/0001-record-decisions-with-madr.md
-review: https://github.com/gsuquet/infra/pull/5
+review: https://github.com/gsuquet/infra/pull/18
 ---
 
 # 0001. Record decisions as RFCs with generated ADRs
@@ -21,4 +21,4 @@ review: https://github.com/gsuquet/infra/pull/5
 - Confirmation: the RFC check passes on every file of `docs/rfc/` and fails when an ADR differs from its RFC's Decision section; every structural pull request links an RFC or adds one; `docs/rfc/README.md` and `docs/adr/README.md` list every file.
 - Revisit when: a structural change merges without an RFC, or the RFC process costs more review time than the changes it records.
 
-Source: [RFC 0001](../../docs/rfc/0001-record-decisions-with-madr.md), reviewed in https://github.com/gsuquet/infra/pull/5.
+Source: [RFC 0001](../../docs/rfc/0001-record-decisions-with-madr.md), reviewed in https://github.com/gsuquet/infra/pull/18.

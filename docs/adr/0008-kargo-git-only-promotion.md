@@ -17,6 +17,7 @@ review: https://github.com/gsuquet/infra/pull/5
   - Bad: promotion latency includes the pull request merge and the Argo CD sync interval.
   - Bad: Kargo health verification cannot rely on the `argocd-update` step's feedback.
   - Bad: the exact git step names are unverified until checked against the Kargo documentation at implementation.
+  - Bad: deferred: where Kargo itself runs and the stage layout (RFC 0021).
 - Confidence: medium, the git step names and the stage layout are not verified yet.
 - Confirmation: no Kargo `Stage` in `infra` or `gsuquet/gitops` uses an `argocd-update` step.
 - Revisit when: promotion latency blocks releases, or RFC 0021 (Kargo tenant promotion) is accepted.

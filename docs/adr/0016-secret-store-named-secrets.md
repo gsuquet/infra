@@ -17,8 +17,9 @@ review: https://github.com/gsuquet/infra/pull/5
   - Bad: all consumers get the same interface, even where a backend offers richer features.
   - Bad: one store per namespace means one backend credential or identity binding per namespace, rendered by the platform.
   - Bad: a tenant could ship its own `SecretStore` named `secrets` and fight the platform one until `SecretStore` is in the tenant blacklist (pending the owner's decision).
+  - Bad: open: the backend itself (RFC 0020) and the kind in-cluster provider (ESO `fake` or `kubernetes`).
 - Confidence: high, the store name is backend-agnostic by construction.
-- Confirmation: a Conftest policy fails any `ExternalSecret` whose `secretStoreRef` is not `kind: SecretStore`, `name: secrets`, any `ClusterSecretStore`, and any `Secret` with `data` or `stringData` in rendered manifests.
+- Confirmation: a Conftest policy, still to add, fails any `ExternalSecret` whose `secretStoreRef` is not `kind: SecretStore`, `name: secrets`, any `ClusterSecretStore`, and any `Secret` with `data` or `stringData` in rendered manifests.
 - Revisit when: the backend chosen in RFC 0020 cannot serve a namespaced store per namespace.
 
 Source: [RFC 0016](../../docs/rfc/0016-secret-store-named-secrets.md), reviewed in https://github.com/gsuquet/infra/pull/5.

@@ -19,7 +19,7 @@ review: https://github.com/gsuquet/infra/pull/5
   - Bad: every new tenant or quota change is an `infra` pull request.
   - Bad: `SecretStore` is not in the blacklist: a tenant could ship a store named `secrets` and fight the platform one; the fix waits for the owner's decision.
 - Confidence: high, isolation relies on Argo CD project limits and Pod Security Admission, both enforced by the cluster.
-- Confirmation: Conftest policies on `rendered/` check each tenant `AppProject` for the source, destination and blacklist rules, and fail any `Namespace` without a `pod-security.kubernetes.io/enforce` label (except `kube-system`) or any tenant namespace at `privileged`.
+- Confirmation: Conftest policies on `rendered/` check each tenant `AppProject` for the source, destination and blacklist rules (on `main`); still to add: a rule that fails any `Namespace` without a `pod-security.kubernetes.io/enforce` label (except `kube-system`) or any tenant namespace at `privileged`.
 - Revisit when: the number of tenants makes `infra` pull requests a bottleneck, or a tenant needs its own network allows.
 
 Source: [RFC 0009](../../docs/rfc/0009-tenant-onboarding-by-infra.md), reviewed in https://github.com/gsuquet/infra/pull/5.

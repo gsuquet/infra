@@ -115,13 +115,14 @@ None.
   - Good: removing a cluster removes two folders with the same name.
   - Good: every child module is reusable by any root.
   - Bad: a module used by one root still lives away from it.
+  - Bad: deferred: the content of `landing-zone/gcp/` (projects, IAM and network for GKE, RFC 0024).
 - Confidence: high, it follows the HashiCorp standard module structure.
 - Confirmation: no `modules/` folder below a root module; each folder has a README describing what belongs there.
 - Revisit when: a root needs a child module that no other root can reuse and the indirection costs more than it saves.
 
 ## Implementation
 
-N/A: the Cloudflare `domain` module moved to `modules/cloudflare-domain` in a direct commit on `main`, before this RFC.
+- 2026-11-19 https://github.com/gsuquet/infra/pull/3
 
 ## References
 

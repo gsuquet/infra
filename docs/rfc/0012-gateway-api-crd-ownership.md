@@ -129,6 +129,7 @@ None.
   - Bad: each implementation's supported Gateway API version is checked against the pinned CRDs on upgrade.
   - Bad: the CRDs are installed by IaC at bootstrap before Cilium, then adopted by Argo CD.
   - Bad: on GKE the CRD version follows Google's schedule, not the pin.
+  - Bad: deferred: the default implementation per cluster, and experimental-channel CRDs (`TCPRoute`, `UDPRoute`).
   - Bad: Cilium creates a `LoadBalancer` `Service` per `Gateway` and kind and Talos have no provider: Cilium LB-IPAM with L2 announcements (LAN addresses) or Gateway API host network mode, chosen in the `cilium` component; public traffic still enters only through Cloudflare Tunnel.
 - Confidence: high, single CRD ownership is the documented way to run several implementations.
 - Confirmation: a Conftest policy fails any Gateway API `CustomResourceDefinition` rendered outside `rendered/gateway-api-crds/`, and any GKE cluster that renders `gateway-api-crds`.

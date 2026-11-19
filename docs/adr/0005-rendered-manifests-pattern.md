@@ -18,7 +18,7 @@ review: https://github.com/gsuquet/infra/pull/5
   - Bad: output lands in public repositories: a chart rendering secret material at template time publishes it and breaks `manifests:check`.
   - Bad: Argo CD cannot tell a Helm install from an upgrade: `pre-install` hooks run on every sync.
 - Confidence: high, the pattern ran in `homelab` and the tooling exists in `infra`.
-- Confirmation: CI runs `mise run manifests:check` (two renders must match the committed files), betterleaks over `rendered/`, and the Conftest rule that fails any `Secret` with `data` or `stringData`; no Argo CD `Application` in `rendered/` has a `helm` source.
+- Confirmation: CI runs `mise run manifests:check` (two renders must match the committed files), betterleaks and the CRD sync wave `-1` set by the render (on `main`); targets still to add: a Conftest rule that fails any `Secret` with `data` or `stringData`, one that fails an Argo CD `Application` in `rendered/` with a `helm` source, and sync wave `1` or higher on child `Application` resources.
 - Revisit when: rendered output makes the repository or pull request diffs too large to review, or Argo CD gains a reviewable render-at-sync mode.
 
 Source: [RFC 0005](../../docs/rfc/0005-rendered-manifests-pattern.md), reviewed in https://github.com/gsuquet/infra/pull/5.
