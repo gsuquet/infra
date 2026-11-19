@@ -9,6 +9,7 @@
 # Usage (from anywhere): mise trust experiments/default-deny/mise.toml && \
 #   mise -C experiments/default-deny install && experiments/default-deny/run.sh
 # KIND_CONFIG=kind-multinode.yaml runs the two-node variant.
+# MIN_FREE_GIB_PER_NODE (default 4) gates the start on free Docker memory.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,6 +61,35 @@ trap cleanup EXIT INT TERM
   jq --version
   yq --version
 } | tee "${OUT}/preflight.txt"
+
+# Memory gate: the host (Docker VM) is shared with other agents' kind clusters.
+# Refuse to start unless MemTotal minus what existing kind nodes already use
+# leaves MIN_FREE_GIB_PER_NODE for each node of this cluster.
+MIN_FREE_GIB_PER_NODE="${MIN_FREE_GIB_PER_NODE:-4}"
+to_bytes() { # "1.5GiB" -> bytes (docker stats units)
+  awk '{ v = $1 + 0; u = $1; sub(/^[0-9.]+/, "", u)
+         m = (u == "KiB") ? 1024 : (u == "MiB") ? 1048576 : (u == "GiB") ? 1073741824 : (u == "TiB") ? 1099511627776 : 1
+         printf "%d\n", v * m }' <<<"$1"
+}
+mem_total=$(docker info --format '{{.MemTotal}}')
+mem_used=0
+kind_nodes=$(docker ps --filter label=io.x-k8s.kind.cluster --format '{{.Names}}')
+for c in ${kind_nodes}; do
+  usage=$(docker stats --no-stream --format '{{.MemUsage}}' "${c}" | awk '{print $1}')
+  mem_used=$((mem_used + $(to_bytes "${usage}")))
+done
+new_nodes=$(grep -cE '^[[:space:]]*-[[:space:]]*role:' "${KIND_CONFIG:-kind.yaml}")
+need=$((new_nodes * MIN_FREE_GIB_PER_NODE * 1073741824))
+free=$((mem_total - mem_used))
+{
+  echo "existing kind nodes: ${kind_nodes:-none}" | tr '\n' ' '
+  echo
+  echo "memory: total=$((mem_total / 1048576))MiB used-by-kind=$((mem_used / 1048576))MiB free=$((free / 1048576))MiB need=$((need / 1048576))MiB (${new_nodes} node(s) x ${MIN_FREE_GIB_PER_NODE}GiB)"
+} | tee -a "${OUT}/preflight.txt"
+if ((free < need)); then
+  echo "not enough Docker memory for ${new_nodes} node(s); delete other kind clusters or lower MIN_FREE_GIB_PER_NODE" >&2
+  exit 1
+fi
 
 # --- results bookkeeping ---------------------------------------------------
 MISMATCHES=0
@@ -134,6 +164,9 @@ k -n kube-system get cm cilium-config -o json | jq -r '.data | to_entries[] | se
 log "phase A: namespaces + baseline default-deny, no component policies"
 k apply -f manifests/namespaces.yaml
 k apply -f policies/baseline/default-deny.yaml
+# Kubelet probe allows (needed under allow-localhost=policy) so readiness is not
+# the variable in phase A: pods are Ready, only the component CNPs are missing.
+k apply -f policies/kubelet-probes/
 k apply -f manifests/probes.yaml
 for ns in tenant-a tenant-b gateway monitoring; do k -n "${ns}" wait --for=condition=Ready pod --all --timeout=180s; done
 
@@ -150,6 +183,8 @@ log "phase A: give components 150s to settle under baseline only"
 sleep 150
 for ns in argocd cert-manager external-secrets; do k -n "${ns}" get pods -o wide; done | tee "${OUT}/phaseA-pods.txt"
 k -n cert-manager logs job/cert-manager-startupapicheck --tail=5 >"${OUT}/phaseA-startupapicheck.txt" 2>&1 || true
+k -n cert-manager rollout status deploy/cert-manager-webhook --timeout=180s
+k -n external-secrets rollout status deploy/external-secrets-webhook --timeout=180s
 drops phaseA
 
 check A1 pass "tenant-a DNS lookup through DNS proxy" -- dns tenant-a client kubernetes.default.svc.cluster.local
@@ -157,16 +192,13 @@ check A2 pass "tenant-a -> kube-apiserver (baseline)" -- http tenant-a client ht
 check A3 fail "tenant-a client -> tenant-a server (same namespace, denied)" -- http tenant-a client http://server.tenant-a.svc/hostname
 check A4 fail "tenant-a -> world (github.com:443)" -- http tenant-a client https://github.com
 only() { yq "select(.kind == \"$1\")" manifests/component-checks.yaml; }
-# On a single node kube-apiserver (host network) and the webhook pods share the
-# node: the source identity is reserved:host, which Cilium always lets reach
-# local endpoints, so the webhook works without any allow. Across nodes the
-# source is reserved:kube-apiserver/remote-node and the call must be denied.
-nodes=$(k get nodes --no-headers | wc -l | tr -d ' ')
-webhook_expect=fail
-if [[ "${nodes}" == 1 ]]; then webhook_expect=pass; fi
-check A5 "${webhook_expect}" "cert-manager webhook without allow (${nodes} node(s))" -- \
+# allow-localhost=policy (values/cilium.yaml): host -> local pod traffic is
+# policed, so even on one node, where kube-apiserver carries the host identity,
+# the webhook call must be denied until the component CNP allows
+# kube-apiserver -> pod:10250. Webhook pods are Ready (kubelet-probes CNPs).
+check A5 fail "cert-manager webhook without allow (allow-localhost=policy)" -- \
   k apply --request-timeout=40s -f <(only Issuer)
-check A6 "${webhook_expect}" "ESO webhook without allow (${nodes} node(s))" -- \
+check A6 fail "ESO webhook without allow (allow-localhost=policy)" -- \
   k apply --request-timeout=40s -f <(only SecretStore)
 k apply -f <(only Application)
 check A7 fail "argocd: compare github.com repo without component policies" -- \
@@ -176,6 +208,11 @@ k -n argocd get application github-probe -o jsonpath='{.status.conditions}{"\n"}
 # --- phase B: component profiles --------------------------------------------
 log "phase B: apply component policies"
 k apply -f policies/components/
+# Late policy: do components recover on their own once their CNPs land, without
+# a restart? Argo CD retries the comparison at the next reconciliation (3 min
+# plus jitter).
+check B0 pass "argocd recovers without restart once its CNPs land (late policy)" -- \
+  wait_cond 300 app_compared github-probe
 # Restart so every component starts clean under the final policy set.
 for ns in argocd cert-manager external-secrets; do
   k -n "${ns}" rollout restart deploy >/dev/null 2>&1 || true
@@ -212,6 +249,9 @@ check B6 pass "monitoring -> cert-manager metrics :9402" -- http monitoring scra
 check B7 pass "monitoring -> external-secrets metrics :8080" -- http monitoring scraper http://external-secrets-metrics.external-secrets.svc:8080/metrics
 check B8 pass "monitoring -> argocd repo-server metrics :8084" -- http monitoring scraper http://argocd-repo-server-metrics.argocd.svc:8084/metrics
 check B9 pass "monitoring -> argocd application-controller metrics :8082" -- http monitoring scraper http://argocd-application-controller-metrics.argocd.svc:8082/metrics
+check B15 pass "monitoring -> argocd-server metrics :8083" -- http monitoring scraper http://argocd-server-metrics.argocd.svc:8083/metrics
+check B16 pass "monitoring -> argocd applicationset metrics :8080" -- http monitoring scraper http://argocd-applicationset-controller-metrics.argocd.svc:8080/metrics
+check B17 fail "monitoring -> argocd-server API :8080 (metrics policy must not open it)" -- http monitoring scraper http://argocd-server.argocd.svc/healthz
 check B10 fail "tenant-b -> cert-manager metrics (not a monitoring namespace)" -- http tenant-b client http://cert-manager.cert-manager.svc:9402/metrics
 check B11 pass "gateway -> argocd-server :80" -- http gateway proxy http://argocd-server.argocd.svc/healthz
 check B12 fail "tenant-b -> argocd-server :80" -- http tenant-b client http://argocd-server.argocd.svc/healthz
@@ -239,7 +279,7 @@ sleep 5
 check D1 pass "tenant-a CNP 'toEntities: world' opens world egress (union bypass works)" -- http tenant-a client https://github.com
 k apply -f policies/tests/cluster-deny.yaml
 sleep 5
-check D2 fail "clusterwide egressDeny 1.0.0.1 beats the tenant allow" -- http tenant-a client https://1.0.0.1
+check D2 fail "tenant-scoped clusterwide egressDeny 1.0.0.1 beats the tenant allow" -- http tenant-a client https://1.0.0.1
 check D3 pass "control: 1.1.1.1 still reachable through the tenant allow" -- http tenant-a client https://1.1.1.1
 k delete -f policies/tests/tenant-bypass.yaml -f policies/tests/cluster-deny.yaml
 sleep 5
@@ -271,6 +311,32 @@ check D6 fail "tenant-bypass CNP was not created in tenant-a" -- k -n tenant-a g
     k -n kube-system exec "${p}" -c cilium-agent -- hubble observe --pod argocd/argocd-repo-server --last 40 -o compact
   done
 } >"${OUT}/phaseD-debug.txt" 2>&1 || true
+
+log "phase D: host-network pods (not Cilium endpoints) are rejected by Pod Security Admission"
+check D7 fail "hostNetwork pod in tenant-a rejected (PSA baseline)" -- \
+  k -n tenant-a apply --dry-run=server -f manifests/hostnetwork-pod.yaml
+check D8 pass "control: same pod accepted in exp-fixtures (no PSA label)" -- \
+  k -n exp-fixtures apply --dry-run=server -f manifests/hostnetwork-pod.yaml
+
+log "phase D: pod label spoofing a namespace label"
+k apply -f policies/tests/label-spoof.yaml
+k -n tenant-b wait --for=condition=Ready pod/spoof --timeout=120s
+k -n tenant-b get pod spoof -o jsonpath='{.metadata.labels}{"\n"}' >"${OUT}/phaseD-spoof.txt"
+k -n kube-system exec ds/cilium -c cilium-agent -- cilium-dbg endpoint list -o json \
+  | jq -r '.[] | select(.status.identity.labels[]? | test("k8s:app=spoof")) | .status.identity.labels[]' >>"${OUT}/phaseD-spoof.txt" 2>&1 || true
+check D9 fail "spoofed pod (role=gateway pod label) -> argocd-server" -- http tenant-b spoof http://argocd-server.argocd.svc/healthz
+check D10 fail "spoofed pod (role=gateway pod label) -> tenant-a server" -- http tenant-b spoof http://server.tenant-a.svc/hostname
+spoof_dropped_at_ingress() { # the egress allow worked, the destination refused
+  local f="${OUT}/phaseD-spoof-verdicts.txt"
+  : >"${f}"
+  for p in $(k -n kube-system get pods -l k8s-app=cilium -o name); do
+    k -n kube-system exec "${p}" -c cilium-agent -- \
+      hubble observe --type policy-verdict --from-pod tenant-b/spoof --last 200 -o compact >>"${f}" 2>&1 || true
+  done
+  grep -q 'INGRESS DENIED' "${f}" && ! grep -q 'EGRESS DENIED' "${f}"
+}
+check D11 pass "spoof flows denied at destination ingress, not source egress" -- spoof_dropped_at_ingress
+k delete -f policies/tests/label-spoof.yaml --wait=false
 drops phaseD
 
 # --- identities (pitfalls evidence) ------------------------------------------

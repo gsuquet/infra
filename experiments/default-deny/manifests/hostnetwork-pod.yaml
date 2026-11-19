@@ -1,0 +1,19 @@
+# Cilium namespace-label keys and digest-pinned images exceed 80 columns.
+# yamllint disable rule:line-length
+# A host-network pod is not a Cilium endpoint, so no CNP/CCNP applies to it.
+# Pod Security Admission (baseline) on tenant namespaces must reject it.
+# Applied with --dry-run=server (admission runs, nothing is persisted) into
+# tenant-a (expected: rejected) and exp-fixtures (no PSA label, control).
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hostnet
+spec:
+  hostNetwork: true
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: agnhost
+      image: registry.k8s.io/e2e-test-images/agnhost:2.53@sha256:99c6b4bb4a1e1df3f0b3752168c89358794d02258ebebc26bf21c29399011a85
+      args:
+        - pause

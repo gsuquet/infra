@@ -33,3 +33,20 @@ spec:
             k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: gateway
     - fromEntities:
         - ingress
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: tenant-kubelet-probes
+  namespace: tenant-a
+spec:
+  description: Kubelet probes (reserved:host) on any port.
+  endpointSelector: {}
+  ingress:
+    # Needed under allow-localhost=policy. Infra does not know tenant probe
+    # ports, so the whole host identity is allowed. Tenants cannot register
+    # webhooks (cluster-scoped) and host-network pods are rejected by Pod
+    # Security Admission, so "host" here is the local kubelet (plus a
+    # same-node kube-apiserver on single-node clusters).
+    - fromEntities:
+        - host

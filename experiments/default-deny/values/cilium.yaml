@@ -15,3 +15,10 @@ hubble:
     enabled: false
   ui:
     enabled: false
+extraConfig:
+  # Police host -> local pod traffic too. By default Cilium always allows it
+  # ("Kubernetes will automatically allow all communication from the local
+  # host of all local endpoints", docs: security/policy/layer3), which on one
+  # node lets kube-apiserver reach webhooks with no rule. Kubelet probes then
+  # need explicit fromEntities: host allows (policies/kubelet-probes/).
+  allow-localhost: policy

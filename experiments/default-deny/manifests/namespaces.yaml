@@ -45,6 +45,12 @@ metadata:
   labels:
     infra.gsuquet.com/network-policy: default-deny
     infra.gsuquet.com/tenant: tenant-a
+    # Host-network, hostPort and privileged pods escape Cilium policy:
+    # tenants get Pod Security Admission baseline (rejects all three).
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.37
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.37
 ---
 apiVersion: v1
 kind: Namespace
@@ -53,6 +59,12 @@ metadata:
   labels:
     infra.gsuquet.com/network-policy: default-deny
     infra.gsuquet.com/tenant: tenant-b
+    # Host-network, hostPort and privileged pods escape Cilium policy:
+    # tenants get Pod Security Admission baseline (rejects all three).
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.37
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.37
 ---
 # Test-only Helm repository for the AppProject check; deliberately unlabelled.
 apiVersion: v1

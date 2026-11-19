@@ -2,15 +2,21 @@
 # yamllint disable rule:line-length
 # Deny rules win over any allow, tenant CNPs included. 1.0.0.1 stands in for a
 # real target such as the cloud metadata endpoint 169.254.169.254/32.
+#
+# Scoped to TENANT namespaces only: a deny cannot be overridden by any allow,
+# and platform pods may need the metadata IP (GKE Workload Identity tokens come
+# from the GKE metadata server at 169.254.169.254, e.g. ESO with GCP Secret
+# Manager).
 ---
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata:
-  name: baseline-egress-deny
+  name: tenant-egress-deny
 spec:
   endpointSelector:
-    matchLabels:
-      k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/network-policy: default-deny
+    matchExpressions:
+      - key: k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/tenant
+        operator: Exists
   # Only adds denies; must not change the default mode of the selected pods.
   enableDefaultDeny:
     ingress: false

@@ -64,26 +64,82 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
+# Metrics: one policy per workload, each opening only that workload's metrics
+# port. A namespace-wide selector would also open 8080 on argocd-server, which
+# is its API/UI port, not a metrics port.
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: argocd-metrics
+  name: argocd-metrics-controller
   namespace: argocd
 spec:
-  description: Metrics scraped from monitoring namespaces.
-  endpointSelector: {}
+  description: application-controller metrics for monitoring namespaces.
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-application-controller
   ingress:
     - fromEndpoints:
         - matchLabels:
             k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: monitoring
       toPorts:
         - ports:
-            - port: "8082" # application-controller
+            - port: "8082"
               protocol: TCP
-            - port: "8083" # server
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-metrics-server
+  namespace: argocd
+spec:
+  description: server metrics for monitoring namespaces (8080 stays gateway-only).
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-server
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: monitoring
+      toPorts:
+        - ports:
+            - port: "8083"
               protocol: TCP
-            - port: "8084" # repo-server
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-metrics-repo-server
+  namespace: argocd
+spec:
+  description: repo-server metrics for monitoring namespaces.
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-repo-server
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: monitoring
+      toPorts:
+        - ports:
+            - port: "8084"
               protocol: TCP
-            - port: "8080" # applicationset-controller
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-metrics-applicationset
+  namespace: argocd
+spec:
+  description: applicationset-controller metrics for monitoring namespaces.
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-applicationset-controller
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: monitoring
+      toPorts:
+        - ports:
+            - port: "8080"
               protocol: TCP

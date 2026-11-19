@@ -1,0 +1,38 @@
+# Cilium namespace-label keys and digest-pinned images exceed 80 columns.
+# yamllint disable rule:line-length
+# Can a tenant forge namespace identity with a POD label? The pod carries the
+# key Cilium uses for namespace labels (io.cilium.k8s.namespace.labels.*).
+# The egress CNP is applied by the test harness (tenants cannot create CNPs)
+# so that only the DESTINATION ingress rules decide: a pass would mean the
+# spoofed label was honoured.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: spoof
+  namespace: tenant-b
+  labels:
+    app: spoof
+    io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: gateway
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: agnhost
+      image: registry.k8s.io/e2e-test-images/agnhost:2.53@sha256:99c6b4bb4a1e1df3f0b3752168c89358794d02258ebebc26bf21c29399011a85
+      args:
+        - pause
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: test-spoof-egress
+  namespace: tenant-b
+spec:
+  description: Test harness only. Lets the spoof pod send to every policed namespace.
+  endpointSelector:
+    matchLabels:
+      app: spoof
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/network-policy: default-deny
