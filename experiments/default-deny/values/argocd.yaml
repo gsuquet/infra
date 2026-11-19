@@ -1,0 +1,27 @@
+# argo-cd chart 10.18.1 (Argo CD v3.6.1), trimmed for the experiment.
+---
+global:
+  networkPolicy:
+    # The chart's own Kubernetes NetworkPolicies are ingress-only and would be
+    # ANDed into the allow-union anyway; the platform owns policy as Cilium
+    # CNPs.
+    create: false
+dex:
+  enabled: false
+notifications:
+  enabled: false
+configs:
+  params:
+    server.insecure: true
+controller:
+  metrics:
+    enabled: true
+repoServer:
+  metrics:
+    enabled: true
+server:
+  metrics:
+    enabled: true
+applicationSet:
+  metrics:
+    enabled: true

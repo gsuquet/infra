@@ -1,0 +1,31 @@
+# Cilium namespace-label keys and digest-pinned images exceed 80 columns.
+# yamllint disable rule:line-length
+# Egress side of cross-namespace flows: the caller's namespace is policed too,
+# so every flow needs an egress allow at the source AND an ingress allow at the
+# destination.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: gateway-egress
+  namespace: gateway
+spec:
+  description: Gateway pods may reach any policy-labelled namespace; the destination decides with its ingress rules.
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/network-policy: default-deny
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: monitoring-egress
+  namespace: monitoring
+spec:
+  description: Scrapers may reach any policy-labelled namespace; the destination opens its metrics ports.
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/network-policy: default-deny

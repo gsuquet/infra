@@ -1,0 +1,8 @@
+# Cilium namespace-label keys and digest-pinned images exceed 80 columns.
+# yamllint disable rule:line-length
+---
+apiVersion: v2
+name: tenant-bypass
+description: Tenant payload that smuggles a CiliumNetworkPolicy (AppProject test).
+type: application
+version: 0.1.0

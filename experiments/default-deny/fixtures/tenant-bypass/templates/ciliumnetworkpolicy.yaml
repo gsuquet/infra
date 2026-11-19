@@ -1,0 +1,12 @@
+# What a tenant would apply if it could: Cilium is allow-union, so this opens
+# world egress despite the clusterwide default-deny.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: tenant-bypass
+spec:
+  endpointSelector: {}
+  egress:
+    - toEntities:
+        - world

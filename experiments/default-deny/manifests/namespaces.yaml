@@ -1,0 +1,61 @@
+# Every namespace except kube-system and the unlabelled test fixture carries the
+# policy label (platform namespaces included).
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    infra.gsuquet.com/network-policy: default-deny
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+  labels:
+    infra.gsuquet.com/network-policy: default-deny
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-secrets
+  labels:
+    infra.gsuquet.com/network-policy: default-deny
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway
+  labels:
+    infra.gsuquet.com/network-policy: default-deny
+    infra.gsuquet.com/role: gateway
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    infra.gsuquet.com/network-policy: default-deny
+    infra.gsuquet.com/role: monitoring
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-a
+  labels:
+    infra.gsuquet.com/network-policy: default-deny
+    infra.gsuquet.com/tenant: tenant-a
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-b
+  labels:
+    infra.gsuquet.com/network-policy: default-deny
+    infra.gsuquet.com/tenant: tenant-b
+---
+# Test-only Helm repository for the AppProject check; deliberately unlabelled.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: exp-fixtures
