@@ -77,13 +77,26 @@ its own commit **(v)**.
 - Good: render in Renovate's single commit; every rebase recomputes it; no modified branch, no loop, no secret in
   infra's CI.
 - Good: covers every update kind, since Renovate stays the updater.
-- Bad: the Renovate token sits in `.git/config` of the clone, the commands' `cwd`, so any render code can read it
-  **(v)**; `allowedCommands` is not a security boundary. Acceptable only with the `renovate-infra` job isolation.
+- Bad: the Renovate token sits in `.git/config` of the clone, the commands' `cwd`, so any render code, mise-installed
+  binary, mise hook or env template (trusted by the allowed `mise trust --yes`) can read it **(v)**;
+  `allowedCommands` is not a security boundary. Acceptable only with the `renovate-infra` job isolation.
 - Bad: needs runner changes (separate job, global options, Renovate bump) and debugging moves to the runner logs.
 
 ### B. GitHub Actions workflow pushes the render to the Renovate branch
 
-A workflow on Renovate PRs renders and pushes a second commit with a dedicated App token.
+A workflow on Renovate PRs renders and pushes a second commit with a dedicated App token. Design if chosen:
+
+1. Trigger on `pull_request` (never `pull_request_target`) for head refs under `gsuquet/renovate/` and the Renovate
+   App actor.
+2. Job 1, `contents: read`, no secret: render, upload `git diff --binary`.
+3. Job 2 mints a dedicated App token (contents: write on infra only), checks the patch touches only
+   `gitops/clusters/*/rendered/**`, commits through the API (signed), no git push; it never runs PR code.
+4. Commit only on a non-empty diff, so job 1 on the bot's own commit stops.
+5. Bot email in `gitIgnoredAuthors`; each rebase costs one extra CI cycle (`:rebaseStalePrs` sets
+   `rebaseWhen: behind-base-branch` **(v)**).
+
+The `GITHUB_TOKEN` variant avoids the secret but needs an approval click per push, and hands the PR-code job a write
+token unless split as above.
 
 - Good: cleanest boundary: the job that holds the write token never runs branch code.
 - Bad: a write credential in the public repo's Actions secrets, against ADR-0019, and a second App to manage.
@@ -104,11 +117,12 @@ targets in an Action **(u)**.
 Manual or agent render, as in homelab: check out the PR, `mise run manifests:render`, push.
 
 - Good: free, simple, no token near branch code except on the person's machine.
-- Bad: a human action on every chart PR, and the branch becomes modified so Renovate stops rebasing it.
+- Bad: a human action on every chart PR, and the branch becomes modified so Renovate stops rebasing it; ticking
+  rebase or `rebaseLabel` regenerates Renovate's commit and discards the manual render commit **(v)**.
 
-| Criterion | A. postUpgradeTasks | B. Actions push | C. Kargo | Do nothing |
+| Criterion | A. postUpgradeTasks | B. Actions push | C. Kargo / Updatecli | Do nothing |
 | --- | --- | --- | --- | --- |
-| Secret in infra CI | none | App key (or approval click) | none in CI, in-cluster creds | none |
+| Secret in infra CI | none | App key (or approval click) | Kargo: in-cluster creds; Updatecli: write secret like B | none |
 | Render in the same commit | yes | second commit | n/a | second commit |
 | Renovate keeps rebasing | yes | only with `gitIgnoredAuthors` | n/a | no |
 | Loop risk | none | must be designed out | none | none |
@@ -123,8 +137,8 @@ deploys through the PR it renders, so A's extra risk is small once `main` has a 
 
 ## Proposal
 
-Option A, only with the runner isolation below; without it, B. Do nothing (manual render) is the fallback when A
-reports an artifact error.
+Option A, only with the runner isolation below; without it, B, as designed in option B. Do nothing (manual
+render) is the fallback when A reports an artifact error.
 
 ```mermaid
 sequenceDiagram
@@ -147,7 +161,8 @@ sequenceDiagram
     Note over R,CI: when main moves, Renovate rebases and re-renders in the same commit
 ```
 
-The update flow: one signed Renovate commit carries the bump and its render.
+The update flow: one Renovate commit carries the bump and its render (signed via `platformCommit`, checked in pilot
+step 6).
 
 ### Component shape and managers
 
@@ -156,14 +171,14 @@ Checked with Renovate 44.239.1 `--platform=local --dry-run=extract` on a scratch
 | Version source | Manager | Result |
 | --- | --- | --- |
 | Umbrella `gitops/components/<name>/Chart.yaml`, `dependencies[].version` | `helmv3`, default match `/(^\|/)Chart\.ya?ml$/` **(v)** | Extracted, datasource `helm`; OCI charts use `docker` **(v)** |
-| Custom `component.yaml` with `chart.repository/name/version` | `custom.regex`, `datasourceTemplate: helm` | Extracted with the regex below (`cert-manager` `v1.19.1` from `https://charts.jetstack.io`) |
+| Custom `component.yaml` with `chart.repository/name/version` | `custom.regex`, `datasourceTemplate: helm` | Extracted with the regex below (`cert-manager` `v1.19.1` from `https://charts.jetstack.io`) **(v)** |
 | Image tags in component `values.yaml`, nested keys too | `helm-values`, default match `/(^\|/)values\.ya?ml$/` **(v)** | Extracted, including `argo-cd.global.image` |
 | Overrides in `gitops/clusters/<name>/cluster.yaml` | none | Needs a `# renovate:` regex; better forbid overrides by schema |
 | `gitops/clusters/*/rendered/**` | none | Not extracted **(v)**; still add to `ignorePaths` so a broad regex never bumps generated files |
 | Render tools in `.mise/config.toml` | `mise`, includes `**/.mise/config{,.*}.toml` **(v)** | Extracted |
 
 Proposed shape: umbrella `Chart.yaml` per component. No custom manager, native OCI and `registryAliases` **(v)**,
-and what homelab renders. The regex alternative is order- and indentation-sensitive:
+and what homelab renders. The regex alternative is order- and indentation-sensitive and must follow the file format:
 
 ```json
 {
@@ -315,7 +330,7 @@ deleted files) is **(u)** until the pilot.
 
 | Updates | Rule |
 | --- | --- |
-| Existing groups `dev tools`, `terraform cli`, `terraform providers` | Keep, with the weekly schedule |
+| Existing groups `dev tools` and the IaC groups (today `terraform cli`, `terraform providers`; renamed with RFC 0022) | Keep, with the weekly schedule |
 | Charts | One PR per component (default); group chart and image tags of a component when both are pinned (`matchFileNames: ["gitops/components/<name>/**"]`, `groupName: "<name>"`), or drop image tags |
 | Coupled components | One group: `gateway-api-crds` with the Gateway API implementation that needs its CRD version; `cert-manager` with its CRDs if split |
 | Mixed groups | Never mix component files with anything else in one group |
@@ -338,6 +353,7 @@ one version exists per component. A module that pins its own version gets a seco
 | 4 | Force a mixed run, `helm` (render tools) plus `actions/checkout` (dev tools): `render tools` re-renders, `dev tools` carries no render |
 | 5 | Force a large CRD bump in every cluster (cert-manager or Argo CD major): the platform commit goes through |
 | 6 | Commit still signed with the rendered files; two consecutive runs hit the cache and no GitHub rate limit |
+| 7 | If `Chart.lock` is committed, force a lock file maintenance run: the `gitops/components/**` lock branch re-renders, the other lock branch carries no render |
 
 Local checks done for this RFC: `renovate --platform=local --dry-run=extract` 44.239.1 on a scratch repo (manager
 table); `renovate-config-validator --strict` 44.239.1 on the repo rules and global options: pass; the same with
@@ -346,10 +362,10 @@ table); `renovate-config-validator --strict` 44.239.1 on the repo rules and glob
 ## Operational impact
 
 - Blast radius: Renovate PRs of `gsuquet/infra` that touch `gitops/components/**` or render tools, on every cluster's `rendered/` tree; a wrong render is caught by `manifests:check` before merge. With the isolation, compromised render code can write to infra branches (and `main` while no ruleset exists); without it, to every repo of the App installation, `gsuquet/renovate-bot` and its `RENOVATE_PRIVATE_KEY` included.
-- Rollout: 1. split the runner job and bump Renovate (pilot step 1), gate: the token is rejected outside infra; 2. add the repo rules (pilot step 2); 3. forced chart, mixed and large-CRD runs (pilot steps 3 to 6), gate: each check passes; then normal weekly schedule.
+- Rollout: 1. split the runner job and bump Renovate (pilot step 1), gate: the token is rejected outside infra; 2. add the repo rules (pilot step 2); 3. forced chart, mixed, large-CRD and lock file runs (pilot steps 3 to 7), gate: each check passes; then normal weekly schedule.
 - Rollback: remove the `postUpgradeTasks` rules from `.github/renovate.json` and `allowedCommands` from the `renovate-infra` config, in one PR each; open PRs fall back to manual render on the next run. Restored within one Renovate run.
 - Migration: None: no state or data changes; Renovate re-creates its branches from config on the next run.
-- Security: render code on a Renovate branch runs next to the Renovate token in `.git/config`; `allowedCommands` is not a boundary, since `mise run manifests:render` and `mise install` run whatever the branch's task files and `.mise/config.toml` say. Until infra runs in its own job, a malicious render could read a token valid for every installed repo and, if the App has `workflows: write` (needed to bump actions **(u)**), push a workflow to `renovate-bot` that exfiltrates `RENOVATE_PRIVATE_KEY`. Controls: single-repo token, `minimumReleaseAge: 3 days`, `.mise/mise.lock` checksums, review of task changes on `main`, a ruleset on `main`.
+- Security: render code on a Renovate branch runs next to the Renovate token in `.git/config`; `allowedCommands` is not a boundary, since `mise run manifests:render` and `mise install` run whatever the branch's task files and `.mise/config.toml` say, and any mise-installed binary, mise hook or env template (trusted by the allowed `mise trust --yes`) can read it. Until infra runs in its own job, a malicious render could read a token valid for every installed repo and, if the App has `workflows: write` (needed to bump actions **(u)**), push a workflow to `renovate-bot` that exfiltrates `RENOVATE_PRIVATE_KEY`. Controls: single-repo token, `minimumReleaseAge: 3 days`, `.mise/mise.lock` checksums, review of task changes on `main`, a ruleset on `main`.
 - Cost: no new paid service; one extra job per scheduled run in `gsuquet/renovate-bot` and repeated downloads until the cache works (runner billing not checked).
 - Observability: a failing render shows as an artifact error on the Renovate PR and a red `manifests:check`; runner logs live in `gsuquet/renovate-bot`, not infra; the Dependency Dashboard lists blocked branches. No SLO.
 
@@ -364,10 +380,13 @@ table); `renovate-config-validator --strict` 44.239.1 on the repo rules and glob
 - A bootstrap module that pins its own chart version drifts from the catalog -> modules read `rendered/` and pin nothing.
 - Debugging moves to `gsuquet/renovate-bot` logs -> PR artifact error points there.
 - `ignorePaths` replaces the preset list -> the snippet repeats it; re-check on preset changes.
+- With a committed `Chart.lock`, the repo-wide `lockFileMaintenance` branch mixes it with `.mise/mise.lock` and
+  provider lock files, so the render task is silently skipped or the branch carries renders it should not ->
+  scope or split `lockFileMaintenance` for `gitops/components/**`, pilot step 7.
 
 ## Open questions
 
-1. Component shape: umbrella `Chart.yaml` (proposed, native `helmv3`) or a custom `component.yaml` with a regex manager? This also settles whether `Chart.lock` is committed.
+1. Component shape: umbrella `Chart.yaml` (proposed, native `helmv3`) or a custom `component.yaml` with a regex manager? This also settles whether `Chart.lock` is committed; if it is, scope or split `lockFileMaintenance` for `gitops/components/**` so a lock branch holds only matching upgrades.
 2. Is "branch code can write to infra" acceptable with the single-repo token (A), or is B's boundary worth a write secret in infra's Actions and a second CI cycle per push? Either way, confirm the App's `workflows: write` and whether `gsuquet/renovate-bot` is in its installation.
 3. Bump the runner from 41.115.2 now? The `mise.lock` refresh needs it regardless.
 4. Pin image tags in component default values, or let charts own them?
@@ -396,4 +415,4 @@ N/A: not accepted yet.
 
 ## Future work
 
-- Option B design, if the isolation is refused: trigger on `pull_request` (never `pull_request_target`) for head refs under `gsuquet/renovate/` and the Renovate App actor; job 1 `contents: read`, no secret, renders and uploads `git diff --binary`; job 2 mints a dedicated App token (contents: write on infra only), checks the patch touches only `gitops/clusters/*/rendered/**`, commits through the API and pushes, never running PR code; commit only on a non-empty diff; bot email in `gitIgnoredAuthors`, each rebase costs one extra CI cycle (`:rebaseStalePrs` sets `rebaseWhen: behind-base-branch` **(v)**). The `GITHUB_TOKEN` variant needs an approval click per push.
+None.
