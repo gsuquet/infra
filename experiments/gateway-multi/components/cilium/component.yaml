@@ -1,4 +1,6 @@
 ---
+# Pinned by chart version only: a Helm repo can re-publish a version.
+# TODO(catalog): record the chart digest from `helm pull`, unverified here.
 name: cilium
 source:
   chart: cilium

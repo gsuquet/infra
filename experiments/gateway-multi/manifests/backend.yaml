@@ -21,6 +21,7 @@ spec:
     spec:
       containers:
         - name: echo
+          # Tag, not digest (mutable). TODO(catalog): pin test images by digest.
           image: registry.k8s.io/e2e-test-images/agnhost:2.56
           args: ["netexec", "--http-port=8080"]
           ports:

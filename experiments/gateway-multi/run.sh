@@ -5,7 +5,10 @@
 # Creates kind cluster exp-gateway-multi, tests, and ALWAYS deletes it
 # (set KEEP=1 to keep it for debugging). Evidence lands in $OUT.
 #
-# Env: GWAPI_FROM (default v1.5.1), GWAPI_BUMPS (default "v1.6.3 v1.7.0"), OUT.
+# Env: GWAPI_FROM (default v1.6.3, the recommended pin, installed fresh before
+# Cilium starts), GWAPI_BUMPS (default "v1.7.0"), OUT. The first runs in the
+# write-up used GWAPI_FROM=v1.5.1 GWAPI_BUMPS="v1.6.3 v1.7.0".
+# The last bump is rolled back to the version before it at the end.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -14,9 +17,11 @@ eval "$(mise env -s bash)"
 
 cluster=exp-gateway-multi
 ctx="kind-$cluster"
-from="${GWAPI_FROM:-v1.5.1}"
-read -r -a bumps <<<"${GWAPI_BUMPS:-v1.6.3 v1.7.0}"
-out="${OUT:-$(mktemp -d -t gateway-multi)}"
+from="${GWAPI_FROM:-v1.6.3}"
+read -r -a bumps <<<"${GWAPI_BUMPS:-v1.7.0}"
+((${#bumps[@]} > 0)) || { echo "GWAPI_BUMPS needs at least one version" >&2; exit 1; }
+# Template form works with both BSD and GNU mktemp.
+out="${OUT:-$(mktemp -d "${TMPDIR:-/tmp}/gateway-multi.XXXXXX")}"
 mkdir -p "$out"
 
 k() { kubectl --context "$ctx" "$@"; }
@@ -169,7 +174,10 @@ for v in "${bumps[@]}"; do
 done
 
 # --- guard rails from the safe-upgrades ValidatingAdmissionPolicy -----------
-last="${bumps[${#bumps[@]}-1]}"
+versions=("$from" "${bumps[@]}")
+last="${versions[${#versions[@]}-1]}"
+prev="${versions[${#versions[@]}-2]}"
+vap=gateway.networking.k8s.io_vap_safeupgrades.yaml
 step "negative: experimental CRD over standard (server dry-run)"
 mkdir -p "$out/experimental"
 curl -fsSL -o "$out/experimental/gateway.networking.k8s.io_httproutes.yaml" \
@@ -182,7 +190,39 @@ yq '.metadata.annotations."gateway.networking.k8s.io/bundle-version" = "v1.4.1"'
   "$out/rendered-$last/gateway-api-crds/gateway.networking.k8s.io_gatewayclasses.yaml" \
   | k apply --server-side --force-conflicts --dry-run=server -f - 2>&1 | tee "$out/neg-downgrade-v1.4.txt" || true
 
-step "downgrade $last -> $from (allowed by the VAP? server dry-run)"
-k apply --server-side --force-conflicts --dry-run=server -f "$out/rendered-$from/gateway-api-crds/" 2>&1 | tee "$out/downgrade-$from.txt" || true
+step "rollback $last -> $prev, whole directory in one apply (server dry-run)"
+# kubectl applies a directory in file-name order, so the VAP file
+# (..._vap_safeupgrades.yaml) goes last and every CRD is checked against the
+# $last VAP that is still installed.
+k apply --server-side --force-conflicts --dry-run=server -f "$out/rendered-$prev/gateway-api-crds/" 2>&1 \
+  | tee "$out/rollback-$prev-onepass-dryrun.txt" || true
+
+step "rollback $last -> $prev, VAP + binding first, then CRDs (real apply)"
+# This is what an Argo CD sync wave before the CRDs would do. VAP changes reach
+# the API server through an informer, so the CRD apply is retried briefly.
+k apply --server-side --force-conflicts -f "$out/rendered-$prev/gateway-api-crds/$vap" \
+  | tee "$out/rollback-$prev-vap.txt"
+rollback_ok=0
+for attempt in 1 2 3 4 5; do
+  if k apply --server-side --force-conflicts -f "$out/rendered-$prev/gateway-api-crds/" \
+    >"$out/rollback-$prev-crds-attempt$attempt.txt" 2>&1; then
+    rollback_ok=1
+    echo "rollback CRD apply succeeded on attempt $attempt"
+    break
+  fi
+  echo "rollback CRD apply attempt $attempt denied:"
+  grep -m1 -E 'denied|Error' "$out/rollback-$prev-crds-attempt$attempt.txt" || true
+  sleep 3
+done
+if ((rollback_ok)); then
+  snapshot "$prev-rollback"
+  k -n kube-system rollout restart deploy/cilium-operator
+  k -n agentgateway-system rollout restart deploy/agentgateway
+  k -n kube-system rollout status deploy/cilium-operator --timeout=180s
+  k -n agentgateway-system rollout status deploy/agentgateway --timeout=180s
+  probe "$prev-rollback" || echo "probe failed after rollback to $prev"
+else
+  echo "ROLLBACK $last -> $prev DENIED even with the VAP applied first" | tee "$out/rollback-$prev-result.txt"
+fi
 
 step "done"
