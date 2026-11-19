@@ -21,8 +21,8 @@ superseded-by: null
 Add `modules/cluster-talos` and a first Talos cluster of Raspberry Pi 4B or CM4 nodes that replaces the k3s
 cluster `olympus` of `gsuquet/homelab`. The module keeps the same output contract as `cluster-kind`, keeps every
 Talos and Kubernetes secret out of OpenTofu state (ephemeral resources and write-only arguments), and hands over to
-the usual `bootstrap-*` modules. Outcome: a 3-node HA cluster built and upgraded with `mise run cluster:up`, with
-one manual step per node: writing the boot image.
+the usual `bootstrap-*` modules. Outcome: a cluster built and upgraded with `mise run cluster:up`, target 3 control planes (a single-node start is
+an open question), with one manual step per node: writing the boot image.
 
 ## Context
 
@@ -30,22 +30,24 @@ one manual step per node: writing the boot image.
   cluster, Gateway API CRDs, Cilium, Argo CD. ADR-0018: state in R2 (`terraform-state`), no object versioning.
 - Owner decisions of 2026-11-19 applied: OpenTofu replaces Terraform (RFC 0022); the `network-policy` component
   hosts the default deny on every cluster (replaces the render-emitted layer of ADR-0010).
-- `olympus` today: one Pi 4 (8 GiB, arm64, `olympus.local`), k3s `v1.34.1+k3s1`, embedded datastore, no agents,
-  Ansible edits `cmdline.txt` for cgroups. Not recorded: Pi count and models, boot media, disks, network, power. The
-  homelab line "a Talos cluster runs on the Raspberry Pi nodes" describes the target, not the present.
+- `olympus` today: one Raspberry Pi (arm64, `olympus.local`, `k3s_server` group, no agents, API 6443, TLS SAN
+  `olympus.local`), k3s `v1.34.1+k3s1`, embedded datastore, Ansible edits `cmdline.txt` for cgroups; homelab sizes
+  target a Pi 4 with 8 GiB. Not recorded: model, Pi count, boot media, disks, network, power. The homelab line "a
+  Talos cluster runs on the Raspberry Pi nodes" describes the target, not the present.
 - Problem: a `talos_machine_secrets` resource puts the full cluster PKI in R2 state, and the one R2 token (shared by
-  `tf` and `tf:read`) is read-write on the whole bucket: anyone who can plan holds cluster root.
-- Checked 2026-11-18: Talos v1.14 (`v1.14.6`, Linux 6.18, Kubernetes 1.37) on `docs.siderolabs.com` (`www.talos.dev`
-  redirects), provider 0.12.0 (2026-09-21; `0.13.0-alpha.1` exists), Cilium stable (1.20.5). **(unverified)**: no
-  allowed source confirms it (memory, inference, `raspberrypi.com`, `factory.talos.dev`, `github.com/siderolabs/*`);
-  each needs a hardware check or a later study.
+  `tf` and `tf:read`, only the Cloudflare token has a read-only twin) is read-write on the whole bucket: anyone who
+  can plan holds cluster root.
+- Checked 2026-11-18 on `docs.siderolabs.com` (`www.talos.dev` redirects): Talos `v1.14.6` (Linux 6.18, Kubernetes
+  1.37), provider 0.12.0 (`0.13.0-alpha.1` exists), Cilium 1.20.5. **(unverified)**: no allowed source (memory,
+  inference, `raspberrypi.com`, `factory.talos.dev`, `github.com/siderolabs/*`); needs hardware or a later study.
 - Decision needed now: the module interface and the secrets source block the first Talos cluster.
 
 ## Goals and non-goals
 
 Goals:
 
-- One Talos cluster on supported Pi boards that survives the loss of one node (3 control planes).
+- One Talos cluster on supported Pi boards; target: 3 control planes, so it survives the loss of one node (a
+  single-node start is an open question).
 - No Talos or Kubernetes secret (PKI, tokens, talosconfig, kubeconfig) in OpenTofu state or plan.
 - `cluster-talos` exposes the `cluster-kind` output names, so `bootstrap-*` modules work unchanged on both.
 - Talos OS and Kubernetes upgrades driven from OpenTofu, one node at a time.
@@ -72,7 +74,8 @@ Non-goals:
 ### Ephemeral `cluster-talos`, bundle from a local file, then the secrets backend (proposed)
 
 Secrets bundle generated once outside the module and passed as an ephemeral input; configs, talosconfig and
-kubeconfig ephemeral; `talos_machine` and `talos_cluster` fed through `_wo` arguments; Cilium by Helm.
+kubeconfig ephemeral; `talos_machine` and `talos_cluster` fed through `_wo` arguments; Cilium from
+`rendered/cilium/` through `bootstrap-cilium`, as on kind (ADR-0015).
 
 - Good: state holds hashes and IDs only, so the shared R2 token stops being a cluster-root token (secrets).
 - Good: same bootstrap modules and outputs as kind (parity).
@@ -82,7 +85,7 @@ kubeconfig ephemeral; `talos_machine` and `talos_cluster` fed through `_wo` argu
 
 ### `talos_machine_secrets` resource in state, encrypted by OpenTofu
 
-Option A of the study: the cluster root creates the bundle, state carries the PKI, OpenTofu client-side state
+Option A of the Secrets table: the cluster root creates the bundle, state carries the PKI, OpenTofu client-side state
 encryption (RFC 0022) hides it from holders of the R2 token alone.
 
 - Good: nothing new to run; no bundle file to keep (one `cluster:up`).
@@ -95,10 +98,11 @@ encryption (RFC 0022) hides it from holders of the R2 token alone.
 
 Talos installs Cilium from a `KubeInlineManifestConfig` document instead of `bootstrap-cilium`.
 
-- Good: no Helm provider in the first apply; Cilium arrives with the control plane (one `cluster:up`).
+- Good: no bootstrap module for Cilium in the first apply; Cilium arrives with the control plane (one `cluster:up`).
 - Bad: Talos re-applies inline manifests on every `upgrade-k8s` with server-side apply and pruning (since 1.13), so
   each Kubernetes upgrade fights Argo CD, which owns `rendered/cilium` (parity).
-- Bad: a second Cilium install path, only on Talos (parity).
+- Bad: a second Cilium install path and a second set of values outside the catalog, only on Talos (parity,
+  ADR-0015).
 
 ### Do nothing
 
@@ -180,15 +184,20 @@ flowchart LR
   dns["DNS name k8s.cluster.home-domain"]
   disc["discovery.talos.dev"]
   laptop -- "first apply: first control-plane IP, 6443" --> cp1
-  laptop -- "talosctl: node IPs, 50000, never the VIP" --> cp2
+  laptop -- "talosctl: node IPs, 50000, never the VIP" --> cp1 & cp2 & cp3
   laptop -- "kubectl, later" --> dns
   dns --> vip
   vip -. "owner elected through etcd" .-> cp1
-  cp1 & cp2 & cp3 -- "KubePrism localhost:7445 balances across" --> vip
+  kp["KubePrism localhost:7445 on each node"]
+  cp1 & cp2 & cp3 --> kp
+  kp -- "local API server" --> cp1
+  kp -- "peer control planes from discovery" --> cp2 & cp3
+  kp -- "endpoint, one target" --> vip
   cp1 & cp2 & cp3 -. "encrypted affiliate data" .-> disc
 ```
 
-Three Pi control planes on one segment, workloads allowed; the API is reached by a DNS name on the VIP.
+Three Pi control planes on one segment, workloads allowed; the API is reached by a DNS name on the VIP; KubePrism
+balances over the local API server, the peers and the endpoint, so a VIP failover does not reach workloads.
 
 | Nodes | Topology | Trade-off |
 | --- | --- | --- |
@@ -243,7 +252,8 @@ sequenceDiagram
   Node-->>Owner: nodes Ready, Argo CD adopts the bootstrap resources
 ```
 
-One physical step, then one apply per cluster; the bootstrap goes to the first control-plane IP, never the VIP.
+A first apply for the image URL, the flash, then the cluster apply; the bootstrap goes to the first control-plane IP,
+never the VIP.
 
 | Step | Rule |
 | --- | --- |
@@ -253,6 +263,7 @@ One physical step, then one apply per cluster; the bootstrap goes to the first c
 | Bootstrap | `talos_cluster`: `node` "Must be an IP" (a hostname goes in `endpoint`), every control-plane IP in `control_plane_nodes` ("Required for HA clusters"), tracks `kubernetes_version`, completes when the Talos layer is healthy and "does not wait for Kubernetes components". `talos_machine_bootstrap` is the older single-purpose resource. |
 | Gate | Ephemeral `talos_cluster_health` with `skip_kubernetes_checks = true`: the full check waits for `Ready` nodes, which never happens before Cilium, so it deadlocks. That the skipped check proves the API server answers, and that an ephemeral resource can gate the `helm` / `kubernetes` providers in the same apply **(unverified)**. |
 | Cilium window | After bootstrap Talos "will hang at phase 18/19 with `retrying error: node not ready`"; "you have about 10 minutes to apply Cilium before the node retries". One apply keeps the gap short. |
+| Drain wiring | `drain_on_upgrade` needs `kubeconfig_wo` from the ephemeral `talos_cluster_kubeconfig`, which follows `talos_cluster`, which follows `talos_machine`: a reference cycle on the first create, when no cluster exists. Whether both can be wired on the first apply **(unverified)**. Fallback: drain disabled on create, enabled by a later apply through `mise run cluster:upgrade <name>`. |
 | Credentials | `talos_client_configuration`: data source and ephemeral only. `talos_cluster_kubeconfig`: data source, resource, ephemeral. The module uses the ephemeral forms only. |
 
 ### Secrets
@@ -260,8 +271,8 @@ One physical step, then one apply per cluster; the bootstrap goes to the first c
 ```mermaid
 flowchart LR
   gen["talosctl gen secrets, or a throwaway root with local state"] --> file["Bundle file outside the repo + offline backup"]
-  file -- "now: mise task sets TF_VAR_machine_secrets" --> var["ephemeral input machine_secrets"]
-  backend["Secrets backend, RFC 0020"] -. "later: ephemeral read at plan time" .-> var
+  file -- "now: mise task, tofu process only" --> var["ephemeral input machine_secrets"]
+  pp["Proton Pass, human store of RFC 0020"] -. "later: pass-cli run in the mise task" .-> var
   var --> cfg["ephemeral configs, talosconfig, kubeconfig"]
   cfg -- "_wo arguments" --> res["talos_machine, talos_cluster"]
   res --> state[("R2 state: hashes and IDs only")]
@@ -272,10 +283,10 @@ Only the source of the bundle changes between now and later; the module contract
 | Option | Bundle source | State content | Plan needs |
 | --- | --- | --- | --- |
 | A. `talos_machine_secrets` resource | State | Kubernetes, etcd and Talos OS CA keys, service-account key, etcd encryption secret, bootstrap token, `os:admin` key, plus a cluster-admin kubeconfig with the `talos_cluster_kubeconfig` resource | State token (rejected) |
-| B. Secrets backend | Generated once, stored in the backend, read at plan time by a mise task or an ephemeral resource of the backend | Hashes and IDs | Backend access with ephemeral reads |
+| B. Proton Pass | Generated once, stored in Proton Pass (the only human store of RFC 0020), injected at plan time by the mise task with `pass-cli run`, as RFC 0022 does for the state passphrase | Hashes and IDs | A `pass-cli` session with the vault |
 | C. Local file (stopgap) | Generated once, kept outside the repo with an offline backup, passed by a mise task | Hashes and IDs | The machine holding the file |
 
-- **Proposed: C now, B when the backend exists.** Both keep the settled layout (`terraform-state`,
+- **Proposed: C now, B once the Proton Pass item and the task exist.** Both keep the settled layout (`terraform-state`,
   `clusters/<name>/terraform.tfstate`); moving C to B changes only where the task reads the bundle, no PKI rotation.
 - `sensitive` hides values in plan output but still writes them to state ([machine_secrets][tf-secrets]).
 - The [ephemeral guide][tf-ephemeral] warns: ephemeral secrets **must** live in a secret manager, or each run
@@ -290,8 +301,10 @@ Only the source of the bundle changes between now and later; the module contract
   talosconfig.
 - Mapping the `talosctl gen secrets` YAML to the provider's `machine_secrets` object (field names differ)
   **(unverified)**; the throwaway-root variant avoids it: its `talos_machine_secrets` output has the right shape.
-- Hand-off to RFC 0020: the backend must serve OpenTofu ephemeral reads at plan time (not only ESO) and allow an
-  offline backup of the Talos bundle.
+- Dependency on RFC 0020: its "Talos specifics" assume the SA signing key
+  (`talos_machine_secrets...certs.k8s_serviceaccount`) sits in the cluster root state in R2. This RFC keeps it out
+  of state, so RFC 0020 must drop that assumption (open question). GCP Secret Manager in RFC 0020 serves ESO only,
+  not plan-time reads: the bundle stays in Proton Pass with an offline backup.
 
 ### Cilium, Gateway API and CoreDNS
 
@@ -311,7 +324,8 @@ The module validates `config_contract >= v1.14` and renders only multi-document 
 (`cluster.network.cni.name: none`, `cluster.proxy.disabled: true`) is not supported. A contract bump is a
 deliberate migration.
 
-Talos values for `bootstrap-cilium` ("Without kube-proxy" and "+ Gateway API" tabs):
+Talos values of the `cilium` catalog component, set per cluster in `gitops/clusters/<name>/cluster.yaml`
+("Without kube-proxy" and "+ Gateway API" tabs):
 
 ```yaml
 ipam:
@@ -335,8 +349,8 @@ gatewayAPI:
 
 | Rule | Why |
 | --- | --- |
-| Install Cilium with Helm through `bootstrap-cilium`, never an inline manifest. | Inline manifests are re-applied on `upgrade-k8s` (server-side apply with pruning since 1.13) and would fight Argo CD; Helm keeps the kind path, only values differ. |
-| One short values file per target (kind, Talos), not the full upstream `values.yaml` templated by homelab (186 KB). | Talos deltas stay reviewable. |
+| `bootstrap-cilium` applies `rendered/cilium/`, never an inline manifest (ADR-0015). | Inline manifests are re-applied on `upgrade-k8s` (server-side apply with pruning since 1.13) and would fight Argo CD; the bootstrap reuses the reviewed rendered files, so kind and Talos share one path. |
+| Talos values are per-cluster overrides of the `cilium` component in `cluster.yaml` (ADR-0006), not the full upstream `values.yaml` templated by homelab (186 KB). | Talos deltas stay reviewable; no values outside the catalog. |
 | `gateway-api-crds` ships every CRD [Cilium requires][cilium-gw] from Gateway API v1.6.3, pinned and bumped with Cilium: GatewayClass, Gateway, HTTPRoute, GRPCRoute, BackendTLSPolicy, ReferenceGrant, **TLSRoute**; TCPRoute, UDPRoute, ListenerSet optional. | Cilium does not install them and they "must be installed" first (ADR-0012, ADR-0015). `l7Proxy` stays at its default `true`. |
 | `forwardKubeDNSToHost: false` (in `ResolverConfig` `hostDNS`) when Cilium `bpf.masquerade: true`. | Known issue: the default `true` with masquerade can break CoreDNS. |
 | Rendered namespace checks allow `pod-security.kubernetes.io/enforce=privileged` on the Cilium connectivity-test namespace only. | The test needs it on Talos. |
@@ -372,7 +386,7 @@ Talos first, inside its supported Kubernetes range, then Kubernetes.
 
 | Rule | Detail |
 | --- | --- |
-| Talos OS | `talos_machine.image = factory.talos.dev/metal-installer/<id>:<version>`; a new version or schematic ID upgrades in place. `drain_on_upgrade` cordons and drains, with `kubeconfig_wo` from the ephemeral kubeconfig. |
+| Talos OS | `talos_machine.image = factory.talos.dev/metal-installer/<id>:<version>`; a new version or schematic ID upgrades in place. `drain_on_upgrade` cordons and drains, with `kubeconfig_wo` from the ephemeral kubeconfig (see Drain wiring under Enrollment). |
 | One node at a time | Talos refuses a control-plane upgrade that loses etcd quorum; Longhorn or CloudNativePG have no such guard. `for_each` cannot chain instances, so `mise run cluster:upgrade <name>` forces `tofu apply -parallelism=1`. |
 | Upgrade path | Through the latest patch of every intermediate minor: several applies. A validation can reject a jump of more than one minor; how the module learns the running version **(unverified)** (`talos_machine` reads it on refresh). |
 | Rollback | A/B images allow `talosctl rollback`; an invalid installer reference aborts the upgrade. |
@@ -388,15 +402,16 @@ Talos first, inside its supported Kubernetes range, then Kubernetes.
 | --- | --- | --- |
 | Kernel | Linux 6.18.48 in Talos 1.14.0, above Falco modern eBPF (5.8) and Cilium (5.10). | Verified (moves in patches) |
 | Same kernel on Pi | One arm64 kernel for all SBCs; the overlay adds firmware, u-boot, device trees. | **(inferred)** |
-| BTF | Cilium requires `CONFIG_DEBUG_INFO_BTF=y`; Talos documents full Cilium support. Check: `talosctl -n <node> ls /sys/kernel/btf/vmlinux`. | **(unverified)** |
+| BTF | Cilium requires `CONFIG_DEBUG_INFO_BTF=y`; Talos documents full Cilium support and "full kernel module support for eBPF". Check: `talosctl -n <node> ls /sys/kernel/btf/vmlinux`. | **(unverified)** |
 | Kernel modules | `CONFIG_MODULE_SIG_FORCE`, `module.sig_enforce=1`: Falco's kernel-module driver cannot load; use `modern_ebpf`. | Verified |
-| Lockdown | 1.14 SecureBoot images run `lockdown=integrity`; the Pi boots without SecureBoot, so none expected. Check: `talosctl read /sys/kernel/security/lockdown`. | Pi **(unverified)** |
+| Lockdown | 1.14 SecureBoot images run `lockdown=integrity`, no longer `confidentiality`, which "improves compatibility with eBPF tooling"; the Pi boots without SecureBoot, so none expected. Check: `talosctl read /sys/kernel/security/lockdown`. | Pi **(unverified)** |
 | Tetragon `Override` | Needs `CONFIG_BPF_KPROBE_OVERRIDE` and error injection on the target; `Sigkill` does not. Same gap in the homelab runtime-security doc. | **(unverified)** arm64 |
 | sysctls | KSPP sysctls (since 1.12) restrict kernel pointers, `/proc`, unprivileged BPF. `kernel.perf_event_paranoid` decides if Falco starts with `CAP_PERFMON` alone (homelab needed `SYS_ADMIN` at 4). Check: `talosctl get kernelparamstatus`. | Value **(unverified)** |
 | Workload isolation | containerd, kubelet and pods run under `sandboxd` in their own PID and mount namespaces; eBPF hooks stay kernel-wide. Whether `hostPID` agents still see `machined`, `apid` in `/proc` **(unverified)**. | **(unverified)** |
 | Pod Security | Falco, Tetragon, Cilium need privileged namespaces: the namespace checks allow it on those platform namespaces only. | Design note |
 
-The check list runs on the first Pi before Falco or Tetragon is enabled there; results are recorded in the repo.
+The check list runs on the first Pi before Falco or Tetragon is enabled there; results go to a
+`docs/reference/` page on Talos on Raspberry Pi, linked from this RFC's Implementation section.
 
 ### Local x86 servers
 
@@ -435,6 +450,8 @@ Inputs:
 | `machine_secrets` | `object`, `ephemeral = true`, required | The bundle (options B or C). The module never creates secrets. |
 | `drain_on_upgrade` | `bool` | Default `true`. |
 
+- No Cilium outputs: KubePrism `localhost:7445` and the other Talos values live in `cluster.yaml`, not in the
+  module.
 - No `kubeconfig_path` / `talosconfig_path`: `local_file` cannot write ephemeral values and admin credentials must
   not land in the repo tree. `mise run cluster:creds <name>` writes them with `talosctl` / `kubectl` outside the repo
   (e.g. under `~/.config`) when a person needs them.
@@ -449,8 +466,6 @@ Outputs:
 | `bootstrap_endpoint` | `https://<first control-plane IP>:6443`, for the bootstrap providers in the first apply. |
 | `cluster_ca_certificate`, `client_certificate`, `client_key`, `kubeconfig` | Always `ephemeral = true`, wired only into provider blocks. That the `helm` and `kubernetes` providers accept ephemeral values in their configuration **(unverified)**: the language allows it; the rehearsal checks the providers. If `cluster-kind` keeps non-ephemeral outputs, root wiring differs per target. |
 | `talosconfig` | Ephemeral. |
-| `k8s_service_host`, `k8s_service_port` | `localhost`, `7445` for `bootstrap-cilium`; `cluster-kind` should expose the same pair. |
-| `cilium_target` | `"talos"`, selects the Cilium values file. |
 | `schematic_ids`, `installer_images`, `disk_image_urls` | Per schematic; `disk_image_urls` drives flashing. |
 | `nodes` | Node name to address and role, for talosconfig endpoints and tasks. |
 
@@ -462,7 +477,9 @@ flowchart TB
   urls --> tm["talos_machine per node: machine_configuration_wo, client_configuration_wo, image, ignore drift"]
   mc --> tm
   cc --> tm
-  tm --> tc["talos_cluster: node = first CP IP, control_plane_nodes = all CP IPs, kubernetes_version"]
+  cc --> tc
+  tm --> tc["talos_cluster: node = first CP IP, control_plane_nodes = all CP IPs, client_configuration_wo, kubernetes_version"]
+  kc -. "kubeconfig_wo for drain_on_upgrade: cycle on first create, unverified" .-> tm
   tc --> health["ephemeral talos_cluster_health, skip_kubernetes_checks"]
   health --> kc["ephemeral talos_cluster_kubeconfig"]
   kc --> boot["clusters/name: bootstrap-gateway-api, bootstrap-cilium, bootstrap-argocd"]
@@ -472,13 +489,27 @@ Resource graph of the module and its hand-off to the cluster root (R2 key `clust
 
 ## Operational impact
 
-- Blast radius: the new Talos cluster, its R2 state object and the workloads moved from `olympus`; a bad schematic or installer bricks nodes until reflashed; a lost bundle without backup loses the cluster PKI. kind, GKE and `landing-zone/cloudflare` are untouched; `bootstrap-cilium` gains a Talos values file and `gateway-api-crds` must ship TLSRoute.
-- Rollout: 1. owner answers hardware and secrets questions; 2. local rehearsal with `talosctl cluster create` and a draft module (QEMU can start nodes in maintenance mode; the flag that skips config injection is **(unverified)**; Docker has no maintenance mode or real boot path) proves the ephemeral contract, the first-IP bootstrap and health gate, Cilium values, the CRD set, the `network-policy` default deny and one Talos and Kubernetes upgrade; 3. one-Pi spike for the Pi-only items (flash, boot media, EEPROM, maintenance-mode apply, eBPF check list), results recorded in the repo; 4. write `modules/cluster-talos` and `clusters/<name>/`; 5. build the 3-node cluster next to `olympus`, move workloads, then archive `gsuquet/homelab`. Each step gates the next.
+- Blast radius: the new Talos cluster, its R2 state object and the workloads moved from `olympus`; a bad schematic or installer bricks nodes until reflashed; a lost bundle without backup loses the cluster PKI. kind, GKE and `landing-zone/cloudflare` are untouched; the `cilium` component gains Talos overrides in the cluster's `cluster.yaml` and `gateway-api-crds` must ship TLSRoute.
+- Rollout: see the table below; each step gates the next.
+- Tasks: adds `mise run cluster:upgrade <name>` and `mise run cluster:creds <name>` to the ADR-0019 task set
+  (`cluster:up|plan|down`).
 - Rollback: before step 5, `mise run cluster:down <name>` and reflash the Pis (minutes per node); `olympus` keeps running. Irreversible after `olympus` is reflashed: going back needs the homelab Ansible run and a data move back.
 - Migration: stateful volumes and databases move from `olympus` (k3s) to the new cluster in a downtime window (open question); the secrets bundle moves from the local file to the backend later without PKI rotation.
 - Security: new home trust boundary. State holds no secrets; anyone who can plan needs the bundle, so plan access equals secret access; the bundle file and its offline backup become the cluster root; the shared read-write R2 token still writes every state; Talos maintenance mode accepts an unauthenticated config on port 50000 until the first apply; public discovery service sees encrypted affiliate data; privileged namespaces for Cilium, Falco, Tetragon and the Cilium test only.
 - Cost: hardware only (Pis, SSDs, enclosures, switch, power), sized by open question 1; no recurring service fee (Image Factory and discovery are public); power draw not measured.
 - Observability: `talos_cluster_health` in every apply; `talosctl health` and node `Ready` after Cilium; Cilium status and connectivity test; Argo CD sync and health of the adopted bootstrap applications; the eBPF check list results before runtime security. No SLO yet.
+
+```mermaid
+flowchart LR
+  s1["Step 1: Owner answers hardware and secrets questions"] --> s2["Step 2: Local rehearsal: talosctl cluster create + draft module"]
+  s2 -- "gate: ephemeral contract, first-IP bootstrap, health gate, Cilium values, CRD set, network-policy, one upgrade" --> s3["Step 3: One-Pi spike"]
+  s3 -- "gate: flash, boot media, EEPROM, maintenance-mode apply, eBPF check list" --> s4["Step 4: Write modules/cluster-talos and clusters/name"]
+  s4 --> s5["Step 5: Build next to olympus, move workloads, archive gsuquet/homelab"]
+```
+
+Rollout; each gate must pass before the next step. Rehearsal: QEMU starts nodes in maintenance mode (the flag that
+skips config injection is **(unverified)**); Docker has no maintenance mode or real boot path. Spike and eBPF
+results go to a `docs/reference/` page on Talos on Raspberry Pi, linked from the Implementation section.
 
 ## Drawbacks and risks
 
@@ -497,6 +528,14 @@ Resource graph of the module and its hand-off to the cluster root (R2 key `clust
 - `ignore_kubernetes_upgrade_drift` is experimental -> pin the provider and read release notes on each bump.
 - eBPF features on Talos arm64 are unchecked -> Falco and Tetragon stay off until the check list passes.
 - Public discovery is an external dependency of a home cluster -> option to disable it (open question).
+- Maintenance mode accepts an unauthenticated config on port 50000: any LAN host can push its own config first ->
+  flash and apply on an isolated segment or VLAN, apply right after power-on, check the node identity (address,
+  hardware) before the apply.
+- The bundle reaches OpenTofu as `TF_VAR_machine_secrets`, visible to child processes and process listings of the
+  same user -> the mise task scopes the variable to the `tofu` process only (`pass-cli run`-style injection) and
+  never exports it to the shell.
+- `drain_on_upgrade` may not be wireable on the first create (reference cycle through the kubeconfig) -> drain
+  disabled on create, enabled through `cluster:upgrade`.
 
 ## Open questions
 
@@ -508,7 +547,10 @@ Resource graph of the module and its hand-off to the cluster root (R2 key `clust
   name?
 - Network: one L2 segment for all nodes? A free VIP address outside DHCP? DHCP reservations or static addresses?
   Internal DNS name for the API endpoint?
-- Secrets: accept C (local bundle, offline backup) now and B with the backend? Where does the offline backup live?
+- Secrets: accept C (local bundle, offline backup) now and B (Proton Pass) later? Where does the offline backup
+  live?
+- RFC 0020: drop its assumption that the SA signing key is in the cluster root state in R2, so both RFCs agree
+  before either is accepted.
 - Plan access: should agents plan Talos roots at all, knowing that with B or C plan means secret access?
 - R2 token: `tf` and `tf:read` share one read-write token for the whole `terraform-state` bucket, so a "read-only"
   plan can write any state. Separate read-only token, per bucket or key prefix? Affects every root.
@@ -586,7 +628,7 @@ N/A: not accepted yet.
 
 ## Future work
 
-- Secrets option B: read the bundle from the RFC 0020 backend instead of the local file.
+- Secrets option B: read the bundle from Proton Pass (`pass-cli run`) instead of the local file.
 - A read-only R2 state token for read-only plans, for every root.
 - Longhorn or another replicated storage once 3 SSD Pis and its workload-isolation test pass.
 - Pi 5 and CM5 once they enter the Talos support matrix.
