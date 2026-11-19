@@ -1,36 +1,39 @@
 # CLAUDE.md
 
-Terraform and GitOps for the platform: kind, Talos and GKE clusters, plus the Cloudflare account.
-Read [`README.md`](README.md) and the decisions in [`docs/adr/`](docs/adr/README.md) before structural changes.
+IaC and GitOps for kind, Talos and GKE clusters, plus the Cloudflare account.
 
-## Layout
+## Before a change
 
-* `landing-zone/{cloudflare,gcp}/`: Terraform roots for account foundations.
-* `modules/`: every Terraform child module (`cluster-*`, `bootstrap-*`, `cloudflare-domain`, ...).
-* `clusters/<name>/`: one Terraform root per cluster; kind uses local state, others R2
-  (`clusters/<name>/terraform.tfstate`).
-* `gitops/components/<name>/`: catalog. `gitops/clusters/<name>/cluster.yaml`: enabled components, overrides,
-  tenants. `gitops/clusters/<name>/rendered/`: generated, never edit by hand.
-* `gitops/tenants/<tenant>.yaml`: tenant onboarding. Tenant manifests live in `gsuquet/gitops`.
+1. Read the ADRs in `docs/adr/` that the change touches: they are the decisions you follow. Done when each
+   touched area (layout, bootstrap, GitOps, tenants, network, secrets, state, CI) has its ADR read.
+2. Read `docs/reference/gitops-tooling.md` when you change `gitops/`, `schemas/`, `policy/` or `.mise/tasks/`.
+3. Read `landing-zone/cloudflare/README.md` when you change `landing-zone/cloudflare/`.
 
-## Tasks
+## Rules
 
-* `mise install`: pinned tools (`.mise/config.toml` + `.mise/mise.lock`).
-* `pre-commit run --all-files`: static checks. No CI workflow exists yet (planned, ADR-0019): nothing gates a
-  pull request but these local hooks.
-* `mise run manifests:render|check` and `mise run cluster:up|plan|down <name>` (planned, ADR-0019).
-
-## Rules for agents
-
-* Never run `pass-cli`, so never `mise run tf` or `mise run tf:read` (both call it).
-* Terraform is read-only for agents: `terraform init -backend=false` and `terraform validate` only. Never
-  `apply`, `destroy`, `import`, `state` or anything that reads or writes remote state or calls Cloudflare.
-* Only exception: a throwaway local kind cluster for tests. `apply` and `destroy` (directly or through
-  `mise run cluster:up|down`) are allowed on a kind cluster root with local state, no remote backend and no
-  credentials. Delete the cluster afterwards.
-* Public repository: never write employer or client names, nor words that label a context as work or
-  personal. Before each commit, check `git grep` for them.
-* Pin every tool in mise (with lockfile) and every GitHub Action and pre-commit hook by commit SHA with a version
+- Never run `pass-cli`, so never `mise run tf` or `mise run tf:read` (both call it): ask the owner for the plan
+  output you need instead.
+- IaC is read-only: `terraform init -backend=false` and `terraform validate` only. No `apply`, `destroy`,
+  `import`, `state`, nor anything that reads or writes remote state or calls Cloudflare. Sole exception: a
+  throwaway kind cluster root with local state, no remote backend and no credentials may be applied and destroyed
+  (directly or through `mise run cluster:up|down`); delete the cluster afterwards.
+- OpenTofu replaces Terraform (RFC 0022, accepted); until the migration lands, tooling and commands stay
+  `terraform`.
+- `gitops/clusters/<name>/rendered/` is generated: change the sources, run `mise run manifests:render`, commit
+  both. CI fails on drift.
+- A cluster has the same `<name>` in `clusters/` and `gitops/clusters/`.
+- Public repository: write no employer or client name, nor a word that labels a context as work or personal;
+  `git grep` for them before each commit.
+- Pin every tool in mise (with lockfile), every GitHub Action and pre-commit hook by commit SHA with a version
   comment.
-* Conventional commits; pre-commit hooks must pass, never `--no-verify`.
-* New structural decision: add an ADR (next free number; 0020 is reserved for the secrets backend).
+- Conventional commits; pre-commit hooks pass, never `--no-verify`.
+
+## Docs
+
+- Human docs (`README.md`, `docs/{concepts,how-to,reference,tutorials,runbooks}/`): write them with the
+  `write-docs` skill, diagram first (Mermaid), tables over prose; link each new page from `docs/README.md`.
+- Decisions: write an RFC in `docs/rfc/` with `write-docs`. An ADR is generated from an accepted RFC by its
+  `rfc-to-adr.sh`; edit the RFC, never the ADR. RFC numbers 0020-0026 are reserved by open studies: the next free
+  one is 0027.
+- Agent-read text (this file): follow `write-for-agents`.
+- PR bodies: `describe-change`.
