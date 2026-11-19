@@ -1,77 +1,26 @@
 ---
+adr: 0003
+title: Use kind, Talos and GKE as distributions per target
 status: accepted
 date: 2026-11-18
-decision-makers: gsuquet
+rfc: docs/rfc/0003-cluster-distribution-per-target.md
+review: https://github.com/gsuquet/infra/pull/5
 ---
 
-# Use kind, Talos and GKE as cluster distributions per target
+# 0003. Use kind, Talos and GKE as distributions per target
 
-## Context and Problem Statement
+- Status: accepted on 2026-11-18 by gsuquet, amended on 2026-11-19
+- Decision: In the context of running one GitOps catalog on developer machines, owned hardware and a cloud, facing different constraints per target, we decided for kind on developer machines (a kind provider chosen in `cluster-kind`), Talos Linux on Raspberry Pis and local servers (`siderolabs/talos` provider, API only, no SSH, no Ansible) and managed GKE in the cloud (`hashicorp/google`; `cluster-gke` takes Spot pools, on-demand pools or both, per cluster, by input), with exactly one `cluster-*` module per target, and against k3s installed by Ansible and kubeadm with self-managed cloud VMs, to achieve immutable API-driven hardware, no cloud control plane to operate and a disposable local copy of the catalog, accepting three code paths that differ in CNI, storage and load balancing.
+- Consequences:
+  - Good: Talos is configured only through its API: machine configs are rendered by IaC, no SSH, no Ansible.
+  - Good: GKE removes control plane operations; kind gives a disposable cluster to test the same catalog.
+  - Good: each GKE cluster trades cost (Spot) against availability (on-demand) by input, with no module change.
+  - Bad: the catalog handles CNI, storage and load balancing differences per cluster.
+  - Bad: GKE owns its dataplane and, with Gateway API enabled (always on Autopilot), the Gateway API CRDs: the catalog skips `cilium` and `gateway-api-crds` on GKE.
+  - Bad: flashing images and network boot of Talos hardware stay manual: the provider does not manage hardware.
+  - Bad: a Spot-only GKE pool can be preempted or out of stock and leave the cluster with zero nodes.
+- Confidence: high, each distribution is the managed or immutable default of its target.
+- Confirmation: `modules/` holds exactly one `cluster-*` module per target; `infra` contains no Ansible code; the `cluster-gke` node pool input accepts Spot and on-demand pools.
+- Revisit when: a cloud other than GKE is needed, or Talos stops supporting the Raspberry Pi models in use.
 
-The platform runs on three kinds of targets: developer machines, owned hardware (Raspberry Pis and local servers)
-and a cloud. Which Kubernetes distribution and provisioning tool does each target use?
-
-## Decision Drivers
-
-* Everything is provisioned by Terraform; no Ansible.
-* The same GitOps catalog must run on every target.
-* Owned hardware should be immutable and API-driven.
-* Cloud should be managed: no control plane to operate.
-
-## Considered Options
-
-* kind (dev) + Talos (hardware) + GKE (cloud)
-* k3s everywhere, installed by Ansible (the `homelab` model)
-* kind (dev) + kubeadm (hardware) + self-managed cloud VMs
-
-## Decision Outcome
-
-Chosen option: "kind (dev) + Talos (hardware) + GKE (cloud)".
-
-| Target | Distribution | Terraform provider |
-| --- | --- | --- |
-| Developer machine | kind | a kind provider (choice in the `cluster-kind` module) |
-| Raspberry Pi, local server | Talos Linux | `siderolabs/talos` |
-| Cloud | GKE (managed) | `hashicorp/google` |
-
-Each target has one child module: `cluster-kind`, `cluster-talos`, `cluster-gke`.
-
-### Consequences
-
-* Good, because Talos is configured only through its API: machine configs are Terraform-rendered, no SSH, no Ansible.
-* Good, because GKE removes control plane operations for the cloud.
-* Good, because kind gives a disposable cluster to test the same catalog locally.
-* Bad, because three distributions differ in CNI, storage and load balancing; the catalog must handle these
-  differences per cluster (see ADR-0011).
-* Bad, because GKE owns some in-cluster pieces itself: its dataplane (ADR-0011) and, with its Gateway API
-  enabled (always on Autopilot), the Gateway API CRDs (ADR-0012). The catalog skips `cilium` and
-  `gateway-api-crds` on GKE.
-* Bad, because the `siderolabs/talos` provider does not manage the hardware itself: flashing images and network
-  boot remain manual steps.
-* Deferred: non-GKE clouds (AWS, Azure, ...) are out of scope.
-
-### Confirmation
-
-`modules/` holds exactly one `cluster-*` module per target; `infra` contains no Ansible code.
-
-## Pros and Cons of the Options
-
-### kind (dev) + Talos (hardware) + GKE (cloud)
-
-* Good, because each target uses the most operable option for its context.
-* Bad, because three code paths to maintain.
-
-### k3s everywhere, installed by Ansible
-
-* Good, because one distribution.
-* Bad, because Ansible is mutable, SSH-based configuration, outside the Terraform plan.
-
-### kind (dev) + kubeadm (hardware) + self-managed cloud VMs
-
-* Good, because upstream Kubernetes everywhere.
-* Bad, because a full OS and control plane to patch on every node.
-
-## More Information
-
-* [Talos Terraform provider](https://registry.terraform.io/providers/siderolabs/talos/latest/docs)
-* [Talos documentation](https://docs.siderolabs.com/)
+Source: [RFC 0003](../../docs/rfc/0003-cluster-distribution-per-target.md), reviewed in https://github.com/gsuquet/infra/pull/5.

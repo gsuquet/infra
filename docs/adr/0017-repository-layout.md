@@ -1,70 +1,22 @@
 ---
+adr: 0017
+title: Organise infra by landing zones, modules, clusters, gitops
 status: accepted
 date: 2026-11-18
-decision-makers: gsuquet
+rfc: docs/rfc/0017-repository-layout.md
+review: https://github.com/gsuquet/infra/pull/5
 ---
 
-# Organise the repository by landing zones, modules, cluster roots and gitops
+# 0017. Organise infra by landing zones, modules, clusters, gitops
 
-## Context and Problem Statement
+- Status: accepted on 2026-11-18 by gsuquet
+- Decision: In the context of one repository holding account foundations, cluster IaC and GitOps sources, facing files with no obvious place, we decided for four top-level areas: `landing-zone/{cloudflare,gcp}/` (account foundation roots), `modules/` (every child module: `cluster-*`, `bootstrap-*`, `cloudflare-domain`, ...), `clusters/<name>/` (one IaC root per cluster) and `gitops/` (`components/<name>/`, `clusters/<name>/` with `cluster.yaml` and `rendered/`, `tenants/<tenant>.yaml`), with a cluster named the same in `clusters/<name>/` and `gitops/clusters/<name>/`, and against child modules nested in their root and one root for everything, to achieve one obvious place per file and reusable child modules, accepting that a module used by one root lives away from it.
+- Consequences:
+  - Good: removing a cluster removes two folders with the same name.
+  - Good: every child module is reusable by any root.
+  - Bad: a module used by one root still lives away from it.
+- Confidence: high, it follows the HashiCorp standard module structure.
+- Confirmation: no `modules/` folder below a root module; each folder has a README describing what belongs there.
+- Revisit when: a root needs a child module that no other root can reuse and the indirection costs more than it saves.
 
-`infra` holds Terraform for account-level foundations, Terraform for clusters, and GitOps sources. Each new file
-needs one obvious place.
-
-## Decision Drivers
-
-* Terraform root modules (with state) are separated from child modules (without state).
-* All files of one cluster are found by its name.
-* Follows the HashiCorp standard module structure.
-
-## Considered Options
-
-* `landing-zone/`, `modules/`, `clusters/`, `gitops/`
-* Child modules nested inside their root (current `landing-zone/cloudflare/modules/domain`)
-* One root module for everything
-
-## Decision Outcome
-
-Chosen option: "`landing-zone/`, `modules/`, `clusters/`, `gitops/`".
-
-```text
-landing-zone/{cloudflare,gcp}/   Terraform roots for account foundations
-modules/                         every child module: cluster-*, bootstrap-*, cloudflare-domain, ...
-clusters/<name>/                 one Terraform root per cluster
-gitops/components/<name>/        catalog: Helm source and default values
-gitops/clusters/<name>/          cluster.yaml and rendered/<component>/
-gitops/tenants/<tenant>.yaml     tenant onboarding
-docs/adr/                        decisions
-```
-
-A cluster's name is the same in `clusters/<name>/` and `gitops/clusters/<name>/`.
-
-### Consequences
-
-* Good, because removing a cluster removes two folders with the same name.
-* Good, because every child module is reusable by any root.
-* Bad, because a module used by one root still lives away from it (the Cloudflare `domain` module moves to
-  `modules/cloudflare-domain`).
-* Deferred: `landing-zone/gcp/` content (projects, IAM, network for GKE).
-
-### Confirmation
-
-No `modules/` folder below a root module (true once `landing-zone/cloudflare/modules/domain` has moved to
-`modules/cloudflare-domain`); each folder has a README describing what belongs there.
-
-## Pros and Cons of the Options
-
-### Four top-level areas
-
-* Good, because one place per kind of file.
-* Bad, because more top-level folders.
-
-### Nested child modules
-
-* Good, because locality.
-* Bad, because reuse across roots needs relative paths across trees.
-
-### One root
-
-* Good, because simple.
-* Bad, because one state and one blast radius for everything.
+Source: [RFC 0017](../../docs/rfc/0017-repository-layout.md), reviewed in https://github.com/gsuquet/infra/pull/5.

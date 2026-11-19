@@ -1,62 +1,24 @@
 ---
+adr: 0013
+title: Expose public services through Cloudflare Tunnel
 status: accepted
 date: 2026-11-18
-decision-makers: gsuquet
+rfc: docs/rfc/0013-public-exposure-via-cloudflare-tunnel.md
+review: https://github.com/gsuquet/infra/pull/5
 ---
 
-# Expose public services through Cloudflare Tunnel
+# 0013. Expose public services through Cloudflare Tunnel
 
-## Context and Problem Statement
+- Status: accepted on 2026-11-18 by gsuquet, amended on 2026-11-19
+- Decision: In the context of exposing services from clusters behind a home connection with no public IP and from the cloud, facing inbound ports and one model per target, we decided for Cloudflare Tunnel through an opt-in `cloudflared` component that connects outbound to Cloudflare and forwards to the cluster's Gateway (tunnel token delivered through the `secrets` store, never committed; a cluster root's Cloudflare token least-privileged, with no account-wide Access edit; account-wide and platform Access applications kept in `landing-zone/cloudflare`), and against a public load balancer with port forwarding and a VPN only, to achieve public services with no inbound port behind Access, accepting Cloudflare as the only public edge.
+- Consequences:
+  - Good: no inbound port and no public IP needed.
+  - Good: Access applications and policies from the landing zone apply in front of the tunnel.
+  - Good: a leaked cluster-root token cannot change account-wide Access.
+  - Bad: public traffic depends on Cloudflare.
+  - Bad: the tunnel token is a secret to deliver through the `secrets` store.
+- Confidence: high, the tunnel model already runs for `olympus` in `homelab`.
+- Confirmation: no cluster exposes a `Service` or `Gateway` on a public IP without an RFC; `LoadBalancer` Services with private addresses (Cilium LB-IPAM on the LAN) are allowed; no cluster root token has account-wide Access edit permission.
+- Revisit when: Cloudflare pricing or terms change for tunnels, or a service needs a non-HTTP public protocol the tunnel does not carry.
 
-Raspberry Pis and local servers sit behind a home connection with no stable public IP and no inbound ports.
-Domains are already on Cloudflare (landing zone `landing-zone/cloudflare`). How do services become public?
-
-## Decision Drivers
-
-* No inbound port on the home network.
-* One exposure model for every target.
-* Access policies (Cloudflare Access) in front of private applications.
-
-## Considered Options
-
-* Cloudflare Tunnel via a `cloudflared` component
-* Public load balancer per cluster (cloud) and port forwarding (home)
-* A VPN or overlay network only
-
-## Decision Outcome
-
-Chosen option: "Cloudflare Tunnel via a `cloudflared` component". `cloudflared` runs in the cluster as an
-opt-in component, connects outbound to Cloudflare, and forwards to the cluster's Gateway.
-
-### Consequences
-
-* Good, because no inbound port and no public IP needed.
-* Good, because Access applications and policies from the landing zone apply in front of the tunnel.
-* Bad, because public traffic depends on Cloudflare.
-* Bad, because the tunnel token is a secret: it is delivered through the `secrets` store (ADR-0016), never
-  committed.
-* Deferred: whether tunnels and DNS records are created by a per-cluster Terraform root or by the tenant layer;
-  network allow rules for `cloudflared` egress (ADR-0010).
-
-### Confirmation
-
-No cluster exposes a `Service` or `Gateway` on a public IP address without an ADR: public traffic enters only
-through `cloudflared`. `LoadBalancer` Services with private addresses (Cilium LB-IPAM on the LAN, ADR-0012) are
-allowed.
-
-## Pros and Cons of the Options
-
-### Cloudflare Tunnel
-
-* Good, because works behind NAT and CGNAT.
-* Bad, because vendor lock-in for the public edge.
-
-### Load balancer and port forwarding
-
-* Good, because no third party.
-* Bad, because exposes the home IP and differs per target.
-
-### VPN only
-
-* Good, because private by default.
-* Bad, because not public.
+Source: [RFC 0013](../../docs/rfc/0013-public-exposure-via-cloudflare-tunnel.md), reviewed in https://github.com/gsuquet/infra/pull/5.

@@ -1,83 +1,24 @@
 ---
+adr: 0012
+title: Give Gateway API CRDs one owner per cluster
 status: accepted
 date: 2026-11-18
-decision-makers: gsuquet
+rfc: docs/rfc/0012-gateway-api-crd-ownership.md
+review: https://github.com/gsuquet/infra/pull/5
 ---
 
-# Use Gateway API with one component owning its CRDs and swappable implementations
+# 0012. Give Gateway API CRDs one owner per cluster
 
-## Context and Problem Statement
+- Status: accepted on 2026-11-18 by gsuquet
+- Decision: In the context of Gateway API for north-south traffic with several possible implementations, facing charts that bundle and fight over the same CRDs, we decided for one CRD owner per cluster: the baseline `gateway-api-crds` component on kind and Talos (upstream standard-channel CRDs at one pinned version, including every CRD the enabled implementations need, for Cilium `GatewayClass`, `Gateway`, `HTTPRoute`, `GRPCRoute`, `BackendTLSPolicy`, `ReferenceGrant` and `TLSRoute`) and GKE itself on GKE (`gateway-api-crds` skipped, `bootstrap-gateway-api` not called), with every implementation installed with CRD installation disabled, owning exactly one `GatewayClass`, chosen per cluster in `cluster.yaml` and allowed to coexist, and against implementation-installed CRDs and the Ingress API, to achieve one CRD version per cluster and swappable implementations, accepting a version check per implementation on every CRD upgrade.
+- Consequences:
+  - Good: CRD upgrades are one explicit pull request; switching implementation keeps the CRDs and the routes.
+  - Bad: each implementation's supported Gateway API version is checked against the pinned CRDs on upgrade.
+  - Bad: the CRDs are installed by IaC at bootstrap before Cilium, then adopted by Argo CD.
+  - Bad: on GKE the CRD version follows Google's schedule, not the pin.
+  - Bad: Cilium creates a `LoadBalancer` `Service` per `Gateway` and kind and Talos have no provider: Cilium LB-IPAM with L2 announcements (LAN addresses) or Gateway API host network mode, chosen in the `cilium` component; public traffic still enters only through Cloudflare Tunnel.
+- Confidence: high, single CRD ownership is the documented way to run several implementations.
+- Confirmation: a Conftest policy fails any Gateway API `CustomResourceDefinition` rendered outside `rendered/gateway-api-crds/`, and any GKE cluster that renders `gateway-api-crds`.
+- Revisit when: an implementation needs experimental-channel CRDs, or GKE stops managing the CRDs.
 
-North-south traffic uses Gateway API. Several implementations exist (Cilium, Envoy Gateway, agentgateway, ...),
-and many charts bundle their own copy of the Gateway API CRDs. Two owners of the same CRDs fight on version and
-on Argo CD sync. Who owns the CRDs, and how are implementations chosen?
-
-## Decision Drivers
-
-* One owner and one version of each CRD per cluster.
-* An implementation can be replaced or added without touching the CRDs.
-* Cilium's Gateway API support requires the CRDs to exist before the Cilium operator starts.
-
-## Considered Options
-
-* Dedicated `gateway-api-crds` component; implementations installed without bundled CRDs, one `GatewayClass` each
-* Let the chosen implementation install the CRDs
-* Ingress API instead of Gateway API
-
-## Decision Outcome
-
-Chosen option: "Dedicated `gateway-api-crds` component".
-
-* `gateway-api-crds` renders the upstream Gateway API CRDs at one pinned version; it is a baseline component on
-  kind and Talos. It includes every CRD the enabled implementations require (Cilium's Gateway API support
-  requires `GatewayClass`, `Gateway`, `HTTPRoute`, `GRPCRoute`, `BackendTLSPolicy`, `ReferenceGrant` and
-  `TLSRoute`, all in the standard channel).
-* GKE: GKE installs and manages the standard-channel Gateway API CRDs itself when its Gateway API is enabled,
-  and it is always enabled on Autopilot. On GKE, GKE is the CRD owner: the catalog skips `gateway-api-crds` (as
-  it skips `cilium`), and `bootstrap-gateway-api` is not called. Implementations on GKE must support the
-  GKE-installed version.
-* Every implementation is installed with its CRD installation disabled, and owns exactly one `GatewayClass`.
-* Implementations are swappable per cluster in `cluster.yaml`; more than one can coexist.
-
-### Consequences
-
-* Good, because CRD upgrades are a single, explicit pull request.
-* Good, because switching implementation does not delete CRDs and the routes using them.
-* Bad, because every implementation's supported Gateway API version must be checked against the pinned CRDs on
-  upgrade.
-* Bad, because the CRDs are installed by Terraform at bootstrap before Cilium (ADR-0015), then adopted by Argo CD.
-* Bad, because on GKE the CRD version follows Google's schedule, not the pinned version.
-* Bad, because Cilium creates a `Service` of type `LoadBalancer` per `Gateway` by default, and kind and Talos have
-  no load balancer provider: those clusters need Cilium LB-IPAM with L2 announcements (private LAN addresses) or
-  Cilium's Gateway API host network mode. The choice is deferred to the `cilium` component; public traffic still
-  enters only through Cloudflare Tunnel (ADR-0013).
-* Deferred: which implementation is the default per cluster; experimental-channel CRDs (for example
-  `TCPRoute`, `UDPRoute`).
-
-### Confirmation
-
-A Conftest policy fails any Gateway API `CustomResourceDefinition` rendered outside `rendered/gateway-api-crds/`,
-and any GKE cluster that renders `gateway-api-crds`.
-
-## Pros and Cons of the Options
-
-### Dedicated CRD component
-
-* Good, because single ownership.
-* Bad, because chart options to disable bundled CRDs must exist for each implementation.
-
-### Implementation installs the CRDs
-
-* Good, because simplest for one implementation.
-* Bad, because two implementations conflict.
-
-### Ingress API
-
-* Good, because universal.
-* Bad, because frozen API with annotation-based extensions.
-
-## More Information
-
-* [Gateway API](https://gateway-api.sigs.k8s.io/)
-* [Deploying Gateways on GKE](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/deploying-gateways)
-* [Cilium Gateway API support](https://docs.cilium.io/en/stable/network/servicemesh/gateway-api/gateway-api/)
+Source: [RFC 0012](../../docs/rfc/0012-gateway-api-crd-ownership.md), reviewed in https://github.com/gsuquet/infra/pull/5.

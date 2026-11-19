@@ -1,68 +1,23 @@
 ---
+adr: 0004
+title: Run one self-managed Argo CD per cluster
 status: accepted
 date: 2026-11-18
-decision-makers: gsuquet
+rfc: docs/rfc/0004-self-managed-argo-cd-per-cluster.md
+review: https://github.com/gsuquet/infra/pull/5
 ---
 
-# Run one self-managed Argo CD per cluster
+# 0004. Run one self-managed Argo CD per cluster
 
-## Context and Problem Statement
+- Status: accepted on 2026-11-18 by gsuquet
+- Decision: In the context of choosing a GitOps topology for a few clusters, facing the choice between per-cluster, hub and `argocd-agent` topologies, we decided for one upstream vanilla Argo CD per cluster, installed once by the bootstrap and then managed by an Argo CD `Application` that points at `gitops/clusters/<name>/rendered/argocd/` (Argo CD manages itself and the other components; a cluster can opt some components out), and against a hub Argo CD and `argocd-agent`, to achieve clusters that sync and recover alone, accepting one UI and one set of credentials per cluster.
+- Consequences:
+  - Good: losing one cluster does not stop syncs on another; no cross-cluster credentials.
+  - Good: Argo CD upgrades are ordinary pull requests to the cluster's rendered manifests.
+  - Bad: one Argo CD UI and one set of credentials per cluster.
+  - Bad: a broken Argo CD self-update needs a manual re-apply of `rendered/argocd/`, the files the bootstrap module applies.
+- Confidence: high, the per-cluster model is the documented Argo CD self-management setup and fits a few clusters.
+- Confirmation: each `gitops/clusters/<name>/cluster.yaml` lists `argocd`, and its rendered folder contains an `Application` that manages `rendered/argocd/`.
+- Revisit when: the number of clusters makes per-cluster UIs and credentials costly; then evaluate `argocd-agent` or a hub.
 
-Each cluster needs a GitOps controller. Argo CD can run once per cluster, or once in a hub that manages remote
-clusters (classic multi-cluster or `argocd-agent`). Which topology does the platform start with?
-
-## Decision Drivers
-
-* A cluster must recover alone: no dependency on another cluster to sync.
-* Few clusters at the start (one kind, one Talos, one GKE).
-* Upstream, vanilla Argo CD: no fork, no custom image.
-
-## Considered Options
-
-* One vanilla Argo CD per cluster, managing itself
-* One hub Argo CD managing all clusters
-* `argocd-agent` with a control plane hub
-
-## Decision Outcome
-
-Chosen option: "One vanilla Argo CD per cluster, managing itself".
-
-* Each cluster runs its own Argo CD, installed once by Terraform (ADR-0015), then managed by an Argo CD
-  `Application` that points at `gitops/clusters/<name>/rendered/argocd/`.
-* Argo CD manages its own components and the other components of the cluster; a cluster can opt some
-  components out.
-
-### Consequences
-
-* Good, because each cluster is self-contained: losing one cluster does not stop syncs on another.
-* Good, because the cluster's Argo CD is upgraded by a normal pull request to its rendered manifests.
-* Bad, because there is one Argo CD UI and one set of credentials per cluster.
-* Bad, because a broken Argo CD self-update needs a manual re-apply of `rendered/argocd/` (the bootstrap module
-  applies the same files).
-* Deferred: `argocd-agent` and any hub topology; revisit when the number of clusters makes per-cluster UIs costly.
-
-### Confirmation
-
-Each `gitops/clusters/<name>/cluster.yaml` lists `argocd`, and its rendered folder contains an `Application`
-that manages `rendered/argocd/`.
-
-## Pros and Cons of the Options
-
-### One vanilla Argo CD per cluster, managing itself
-
-* Good, because no cross-cluster credentials.
-* Bad, because no single view of all clusters.
-
-### One hub Argo CD managing all clusters
-
-* Good, because one UI.
-* Bad, because the hub needs API access to every cluster, and is a single point of failure.
-
-### `argocd-agent` with a control plane hub
-
-* Good, because pull-based agents with one UI.
-* Bad, because more moving parts than the current number of clusters justifies.
-
-## More Information
-
-* [Argo CD declarative setup: manage Argo CD using Argo CD](https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/)
+Source: [RFC 0004](../../docs/rfc/0004-self-managed-argo-cd-per-cluster.md), reviewed in https://github.com/gsuquet/infra/pull/5.
