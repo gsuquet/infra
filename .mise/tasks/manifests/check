@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#MISE description="Render every cluster, then fail if the committed rendered/ folders differ"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+
+# shellcheck source=SCRIPTDIR/../_lib/gitops.sh
+source .mise/tasks/_lib/gitops.sh
+
+require git
+
+mise run manifests:render
+
+# Untracked files count too: a new component has no committed output yet.
+# Ignored ones as well (!! lines): .gitignore re-includes rendered/, but a
+# future rule must not hide a component from this check.
+rendered=(':(glob)**/clusters/*/rendered/**')
+# git lists ignored folders (.terraform/...) whatever the pathspec: keep the
+# paths under rendered/ only.
+changes="$(git status --porcelain --untracked-files=all --ignored=matching -- "${rendered[@]}" | grep -E '^.. (.*/)?clusters/[^/]+/rendered/' || true)"
+if [ -n "$changes" ]; then
+  log_error "The rendered manifests are out of date. Run 'mise run manifests:render' and commit the result."
+  printf '%s\n' "$changes" >&2
+  git --no-pager diff --stat -- "${rendered[@]}" >&2
+  exit 1
+fi
+log_info "The rendered manifests are up to date"
