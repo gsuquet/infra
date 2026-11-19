@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=../../../../schemas/component.schema.json
+---
+apiVersion: infra.gsuquet.com/v1alpha1
+kind: Component
+name: hello
+description: Test fixture of the GitOps tooling, built on testdata/charts/hello.
+namespace: hello
+baseline: true
+targets:
+  - kind
+  - talos
+  - gke

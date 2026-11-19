@@ -1,0 +1,11 @@
+---
+# Source: hello/charts/hello/templates/greeting.yaml
+apiVersion: example.com/v1alpha1
+kind: Greeting
+metadata:
+  name: hello
+  namespace: hello
+spec:
+  message: "Hello"
+  replicas: 2
+  note: null
