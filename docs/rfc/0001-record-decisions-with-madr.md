@@ -139,7 +139,7 @@ None.
 
 ## Implementation
 
-N/A: implemented by the pull request that backfills RFCs 0001-0019; its link is added once it merges.
+- 2026-11-19 https://github.com/gsuquet/infra/pull/18
 
 ## References
 
