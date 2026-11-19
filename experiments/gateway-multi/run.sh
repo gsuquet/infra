@@ -199,11 +199,17 @@ k apply --server-side --force-conflicts --dry-run=server -f "$out/rendered-$prev
 
 step "rollback $last -> $prev, VAP + binding first, then CRDs (real apply)"
 # This is what an Argo CD sync wave before the CRDs would do. VAP changes reach
-# the API server through an informer, so the CRD apply is retried briefly.
+# the API server through an informer, so the CRD apply is retried every second (10 tries).
 k apply --server-side --force-conflicts -f "$out/rendered-$prev/gateway-api-crds/$vap" \
   | tee "$out/rollback-$prev-vap.txt"
+# Time since the VAP apply returned, so the write-up can compare the VAP
+# propagation delay with Argo CD's delay between sync waves (bash 3.2 on macOS
+# has no EPOCHREALTIME, hence perl).
+now() { perl -MTime::HiRes=time -e 'printf "%.1f", time'; }
+vap_applied="$(now)"
 rollback_ok=0
-for attempt in 1 2 3 4 5; do
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  echo "attempt $attempt at +$(awk -v a="$(now)" -v b="$vap_applied" 'BEGIN {printf "%.1f", a - b}')s after the VAP apply"
   if k apply --server-side --force-conflicts -f "$out/rendered-$prev/gateway-api-crds/" \
     >"$out/rollback-$prev-crds-attempt$attempt.txt" 2>&1; then
     rollback_ok=1
@@ -212,7 +218,7 @@ for attempt in 1 2 3 4 5; do
   fi
   echo "rollback CRD apply attempt $attempt denied:"
   grep -m1 -E 'denied|Error' "$out/rollback-$prev-crds-attempt$attempt.txt" || true
-  sleep 3
+  sleep 1
 done
 if ((rollback_ok)); then
   snapshot "$prev-rollback"
