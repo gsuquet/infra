@@ -1,70 +1,25 @@
 ---
+adr: 0016
+title: Read secrets through an ESO store named secrets
 status: accepted
 date: 2026-11-18
-decision-makers: gsuquet
+rfc: docs/rfc/0016-secret-store-named-secrets.md
+review: https://github.com/gsuquet/infra/pull/5
 ---
 
-# Read secrets through an External Secrets store named secrets in every namespace
+# 0016. Read secrets through an ESO store named secrets
 
-## Context and Problem Statement
+- Status: accepted on 2026-11-18 by gsuquet
+- Decision: In the context of platform components and tenants that need secrets before the backend is chosen, facing public repositories and kind clusters with no credentials, we decided for the External Secrets Operator with a namespaced `SecretStore` named `secrets` in every namespace, rendered by the platform (tenant namespaces through onboarding), never a `ClusterSecretStore`, with every `ExternalSecret` setting `secretStoreRef: {kind: SecretStore, name: secrets}` and kind using an in-cluster backend with dummy values, and against backend-specific store names and SOPS-encrypted secrets in Git, to achieve consumers that never change when the backend changes, accepting one indirection and one backend credential or identity binding per namespace.
+- Consequences:
+  - Good: changing the backend changes only the rendered stores, not consumers.
+  - Good: kind runs the full catalog with no credentials.
+  - Bad: all consumers get the same interface, even where a backend offers richer features.
+  - Bad: one store per namespace means one backend credential or identity binding per namespace, rendered by the platform.
+  - Bad: a tenant could ship its own `SecretStore` named `secrets` and fight the platform one until `SecretStore` is in the tenant blacklist (pending the owner's decision).
+  - Bad: open: the backend itself (RFC 0020) and the kind in-cluster provider (ESO `fake` or `kubernetes`).
+- Confidence: high, the store name is backend-agnostic by construction.
+- Confirmation: a Conftest policy, still to add, fails any `ExternalSecret` whose `secretStoreRef` is not `kind: SecretStore`, `name: secrets`, any `ClusterSecretStore`, and any `Secret` with `data` or `stringData` in rendered manifests.
+- Revisit when: the backend chosen in RFC 0020 cannot serve a namespaced store per namespace.
 
-The secrets backend (cloud secret manager, password manager, in-cluster vault, ...) is still under study
-(reserved ADR-0020). Platform components and tenants need a stable way to request secrets now, without
-binding to a backend.
-
-## Decision Drivers
-
-* Manifests must not change when the backend changes.
-* Public repositories: no secret value in Git, ever.
-* kind clusters must work without any real credential.
-
-## Considered Options
-
-* External Secrets Operator with a store named `secrets` in every namespace
-* Backend-specific store names in each manifest
-* SOPS-encrypted secrets in Git
-
-## Decision Outcome
-
-Chosen option: "External Secrets Operator with a store named `secrets` in every namespace". The store is a
-namespaced `SecretStore` named `secrets`, never a `ClusterSecretStore`: every `ExternalSecret` sets
-`secretStoreRef: {kind: SecretStore, name: secrets}`, so consumers never change, whatever the backend. The
-platform renders that store for each namespace (tenant namespaces through onboarding, ADR-0009). On kind, the
-store is an in-cluster backend with dummy values.
-
-### Consequences
-
-* Good, because changing the backend changes only the rendered stores, not consumers.
-* Good, because kind runs the full catalog with no credentials.
-* Bad, because all consumers get the same interface, even where a backend offers richer features.
-* Bad, because one store per namespace means one backend credential or identity binding per namespace, rendered
-  by the platform.
-* Risk: a tenant application could ship its own `SecretStore` named `secrets` and fight the platform-rendered
-  one; adding `SecretStore` to the tenant `namespaceResourceBlacklist` is pending the owner's decision (ADR-0009).
-* Open: the backend itself (ADR-0020) and the kind in-cluster provider (ESO `fake` or `kubernetes` provider).
-
-### Confirmation
-
-A Conftest policy fails any `ExternalSecret` whose `secretStoreRef` is not `kind: SecretStore`, `name: secrets`,
-any `ClusterSecretStore`, and any `Secret` with `data` or `stringData` in rendered manifests.
-
-## Pros and Cons of the Options
-
-### ESO store named `secrets`
-
-* Good, because backend-agnostic.
-* Bad, because one more indirection.
-
-### Backend-specific store names
-
-* Good, because explicit.
-* Bad, because a backend change edits every consumer.
-
-### SOPS in Git
-
-* Good, because no runtime dependency.
-* Bad, because encrypted secrets in public repositories and key management per cluster.
-
-## More Information
-
-* [External Secrets Operator](https://external-secrets.io/)
+Source: [RFC 0016](../../docs/rfc/0016-secret-store-named-secrets.md), reviewed in https://github.com/gsuquet/infra/pull/5.

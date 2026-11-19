@@ -1,70 +1,25 @@
 ---
+adr: 0014
+title: Install a fixed baseline of components on every cluster
 status: accepted
 date: 2026-11-18
-decision-makers: gsuquet
+rfc: docs/rfc/0014-baseline-components.md
+review: https://github.com/gsuquet/infra/pull/5
 ---
 
-# Install a fixed set of baseline components on every cluster
+# 0014. Install a fixed baseline of components on every cluster
 
-## Context and Problem Statement
+- Status: accepted on 2026-11-18 by gsuquet
+- Decision: In the context of a component catalog shared by clusters of very different sizes, facing tenants that need guaranteed APIs and Raspberry Pis that need a small footprint, we decided for a small fixed baseline on every cluster: `argocd`, `cert-manager`, `external-secrets` and `network-policy` everywhere, GKE included, plus `gateway-api-crds` and `cilium` everywhere except GKE (GKE owns its Gateway API CRDs and dataplane), with every other component (Gateway implementation, `cloudflared`, Kargo, observability, storage, ...) opt-in in `cluster.yaml`, and against a large baseline and no baseline, to achieve APIs and default deny that platform and tenant manifests can always assume, accepting that a cluster serves no route until it enables a Gateway implementation.
+- Consequences:
+  - Good: platform and tenant manifests can always assume `Gateway` CRDs, `Certificate`, `ExternalSecret`, the `secrets` store and default deny.
+  - Good: small clusters stay small.
+  - Good: amended 2026-11-19: `network-policy` joins the baseline on every cluster, GKE included, so default deny is a component like the others.
+  - Bad: a Gateway implementation is opt-in: a cluster with Gateway API CRDs and no implementation serves no route.
+  - Bad: the baseline list is a rule the render or a schema must enforce.
+  - Bad: unresolved: tenant onboarding and platform `Namespace` manifests were decided on 2026-11-18 as a render-emitted `rendered/platform/` layer, but the render on `main` has no such layer and passes `gitops.tenants` to a `tenant` component; the owner decides which one renders them.
+- Confidence: high, each baseline component is a dependency of other components or of tenants.
+- Confirmation: the render, or a schema check on `cluster.yaml`, fails when a baseline component is missing, with the GKE exceptions for `cilium` and `gateway-api-crds`.
+- Revisit when: a component becomes a dependency of most tenants (for example metrics), or the baseline no longer fits a Raspberry Pi cluster.
 
-The catalog (ADR-0006) can hold many components. Some are needed by everything else (CRDs, CNI, GitOps,
-certificates, secrets). Which components does every cluster run, and how are the others chosen?
-
-## Decision Drivers
-
-* Other components and tenants can rely on baseline APIs (`Gateway`, `Certificate`, `ExternalSecret`).
-* Small clusters (Raspberry Pis) should run only what they need.
-
-## Considered Options
-
-* Small fixed baseline, everything else opt-in
-* Large baseline (observability, ingress, policy engine, ...) on every cluster
-* No baseline: each cluster lists everything
-
-## Decision Outcome
-
-Chosen option: "Small fixed baseline, everything else opt-in".
-
-| Component | Every cluster | Note |
-| --- | --- | --- |
-| `gateway-api-crds` | yes, except GKE (GKE owns the CRDs) | ADR-0012 |
-| `cilium` | yes, except GKE | ADR-0011 |
-| `argocd` | yes | ADR-0004 |
-| `cert-manager` | yes | |
-| `external-secrets` | yes | ADR-0016 |
-
-Every other component (Gateway implementation, `cloudflared`, Kargo, observability, storage, ...) is opt-in in
-`cluster.yaml`.
-
-### Consequences
-
-* Good, because platform and tenant manifests can always assume these APIs.
-* Good, because small clusters stay small.
-* Bad, because a Gateway implementation is opt-in: a cluster with Gateway API CRDs but no implementation serves no
-  route.
-* Bad, because the baseline list is a rule the render or a schema must enforce.
-* Note: the default-deny network policy and tenant onboarding are not catalog components; the render emits them
-  for every cluster in `rendered/platform/` (ADR-0010).
-
-### Confirmation
-
-The render task, or a schema check on `cluster.yaml`, fails when a baseline component is missing (with the GKE
-exceptions for `cilium` and `gateway-api-crds`).
-
-## Pros and Cons of the Options
-
-### Small baseline
-
-* Good, because predictable and light.
-* Bad, because useful defaults (metrics) must be enabled per cluster.
-
-### Large baseline
-
-* Good, because uniform clusters.
-* Bad, because too heavy for Raspberry Pis.
-
-### No baseline
-
-* Good, because full freedom.
-* Bad, because nothing can be assumed by tenants.
+Source: [RFC 0014](../../docs/rfc/0014-baseline-components.md), reviewed in https://github.com/gsuquet/infra/pull/5.

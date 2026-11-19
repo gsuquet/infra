@@ -1,60 +1,23 @@
 ---
+adr: 0007
+title: Keep tenant manifests in gsuquet/gitops, code in app repos
 status: accepted
 date: 2026-11-18
-decision-makers: gsuquet
+rfc: docs/rfc/0007-tenant-manifests-in-gitops-repo.md
+review: https://github.com/gsuquet/infra/pull/5
 ---
 
-# Keep tenant application code in its own repositories and rendered tenant manifests in gsuquet/gitops
+# 0007. Keep tenant manifests in gsuquet/gitops, code in app repos
 
-## Context and Problem Statement
+- Status: accepted on 2026-11-18 by gsuquet
+- Decision: In the context of tenant applications developed independently of the platform, facing shared review queues and tenant access to cluster-scoped resources, we decided for application code in its own repositories and rendered tenant manifests in the public repository `gsuquet/gitops` under `tenants/<tenant>/<cluster>/` (no secret value, only `ExternalSecret` references), with `infra` only onboarding tenants and restricting each tenant `AppProject` to `gsuquet/gitops`, and against tenant manifests inside `infra` and manifests in each app repository, to achieve separate review queues and one view of every tenant per cluster, accepting three repositories in a first deploy.
+- Consequences:
+  - Good: the platform repository does not change on every release.
+  - Good: one place lists what every tenant runs on every cluster.
+  - Bad: three repositories are involved in a first deploy (app, `gsuquet/gitops`, `infra` onboarding).
+  - Bad: `gsuquet/gitops` is public: it never holds a secret value.
+- Confidence: high, the boundary matches the ownership of each repository.
+- Confirmation: every tenant `AppProject` has `sourceRepos` limited to `gsuquet/gitops` (Conftest policy on `rendered/`).
+- Revisit when: tenants need manifests that `gsuquet/gitops` cannot hold publicly.
 
-Applications (tenants) are developed independently of the platform. Where do their source code and the
-manifests deployed per cluster live, and what may a tenant change?
-
-## Decision Drivers
-
-* Platform changes and application releases should not share a review queue.
-* Tenant deploys must not be able to change cluster-scoped resources.
-* The same rendered manifests pattern as the platform (ADR-0005).
-
-## Considered Options
-
-* App code in own repos; rendered manifests in a separate public repo `gsuquet/gitops`
-* Tenant manifests inside `infra`
-* Each app repo holds its own deploy manifests
-
-## Decision Outcome
-
-Chosen option: "App code in own repos; rendered manifests in `gsuquet/gitops`".
-
-* Each application has its own repository (code, chart or Kustomize sources).
-* Rendered tenant manifests live in `gsuquet/gitops` under `tenants/<tenant>/<cluster>/`.
-* `infra` only onboards tenants (ADR-0009); each tenant Argo CD `Application` is restricted to `gsuquet/gitops`.
-
-### Consequences
-
-* Good, because the platform repo does not change on every release.
-* Good, because one place lists what every tenant runs on every cluster.
-* Bad, because three repositories are involved in a first deploy (app, gitops, infra onboarding).
-* Bad, because `gsuquet/gitops` is public: no secret values in it, only `ExternalSecret` references (ADR-0016).
-
-### Confirmation
-
-Every tenant `AppProject` has `sourceRepos` limited to `gsuquet/gitops`.
-
-## Pros and Cons of the Options
-
-### Separate `gsuquet/gitops`
-
-* Good, because clear ownership boundary.
-* Bad, because one more repository.
-
-### Tenant manifests inside `infra`
-
-* Good, because one repository.
-* Bad, because every release is a platform pull request.
-
-### Manifests in each app repo
-
-* Good, because self-contained apps.
-* Bad, because Argo CD must trust many repositories, and there is no single view per cluster.
+Source: [RFC 0007](../../docs/rfc/0007-tenant-manifests-in-gitops-repo.md), reviewed in https://github.com/gsuquet/infra/pull/5.

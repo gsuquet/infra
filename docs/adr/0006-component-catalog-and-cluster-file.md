@@ -1,63 +1,23 @@
 ---
+adr: 0006
+title: Define a component catalog and a cluster.yaml per cluster
 status: accepted
 date: 2026-11-18
-decision-makers: gsuquet
+rfc: docs/rfc/0006-component-catalog-and-cluster-file.md
+review: https://github.com/gsuquet/infra/pull/5
 ---
 
-# Define components in a catalog and enable them per cluster in cluster.yaml
+# 0006. Define a component catalog and a cluster.yaml per cluster
 
-## Context and Problem Statement
+- Status: accepted on 2026-11-18 by gsuquet
+- Decision: In the context of several clusters running overlapping components with small differences, facing drift between copies and the need for one view per cluster, we decided for a component catalog `gitops/components/<name>/` (Helm source with a pinned version and default values) and one `gitops/clusters/<name>/cluster.yaml` per cluster (enabled components, per-component value overrides, tenants), merged by the render into `gitops/clusters/<name>/rendered/<component>/`, and against per-cluster copies and Argo CD ApplicationSets with cluster generators, to achieve one definition per component and one reviewable file per cluster, accepting a custom render task and config split between catalog and cluster file.
+- Consequences:
+  - Good: adding a component to a cluster is one line plus optional overrides.
+  - Good: a chart version bump lives in one place and renders into every cluster.
+  - Bad: a component's effective config is split between the catalog and each `cluster.yaml`.
+  - Bad: the `cluster.yaml` format is a contract that needs a JSON Schema and a check.
+- Confidence: high, the same model ran in `homelab`.
+- Confirmation: `mise run manifests:render` reads only `gitops/components/`, `gitops/clusters/*/cluster.yaml` and `gitops/tenants/`; a schema check validates every `cluster.yaml`.
+- Revisit when: overrides in `cluster.yaml` grow larger than the catalog defaults they override.
 
-Several clusters run overlapping sets of components with small differences (CNI, storage, domains). Where is a
-component defined, and where does a cluster say which components it runs and with which values?
-
-## Decision Drivers
-
-* One definition per component, reused by every cluster.
-* One file per cluster that tells what runs on it.
-* Overrides close to the cluster, visible in review.
-
-## Considered Options
-
-* Component catalog + `cluster.yaml` per cluster
-* Per-cluster copies of each component
-* Argo CD ApplicationSets with cluster generators
-
-## Decision Outcome
-
-Chosen option: "Component catalog + `cluster.yaml` per cluster".
-
-* `gitops/components/<name>/` holds the Helm source (chart reference, pinned version) and the default values.
-* `gitops/clusters/<name>/cluster.yaml` lists the enabled components, per-component value overrides, and the
-  tenants of the cluster (ADR-0009).
-* The render merges defaults and overrides and writes `gitops/clusters/<name>/rendered/<component>/`.
-
-### Consequences
-
-* Good, because adding a component to a cluster is one line plus optional overrides.
-* Good, because a chart version bump lives in one place and renders into every cluster.
-* Bad, because a component's effective config is split between the catalog and each `cluster.yaml`.
-* Bad, because the `cluster.yaml` format is a contract: it needs a JSON Schema and a check (to be added with the
-  render task).
-
-### Confirmation
-
-`mise run manifests:render` reads only `gitops/components/` and `gitops/clusters/*/cluster.yaml`; a schema check
-validates every `cluster.yaml`.
-
-## Pros and Cons of the Options
-
-### Component catalog + `cluster.yaml`
-
-* Good, because explicit and reviewable.
-* Bad, because a custom render task to maintain.
-
-### Per-cluster copies
-
-* Good, because no indirection.
-* Bad, because copies drift and every upgrade touches every cluster by hand.
-
-### ApplicationSets with cluster generators
-
-* Good, because native Argo CD.
-* Bad, because rendering moves back to sync time, against ADR-0005.
+Source: [RFC 0006](../../docs/rfc/0006-component-catalog-and-cluster-file.md), reviewed in https://github.com/gsuquet/infra/pull/5.

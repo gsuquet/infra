@@ -1,69 +1,23 @@
 ---
+adr: 0019
+title: Drive lifecycles with mise tasks and keep CI static
 status: accepted
 date: 2026-11-18
-decision-makers: gsuquet
+rfc: docs/rfc/0019-lifecycle-tasks-and-ci-scope.md
+review: https://github.com/gsuquet/infra/pull/5
 ---
 
-# Drive lifecycles with mise tasks and keep CI to static checks
+# 0019. Drive lifecycles with mise tasks and keep CI static
 
-## Context and Problem Statement
+- Status: accepted on 2026-11-18 by gsuquet
+- Decision: In the context of lifecycle commands shared by operators, agents and CI in a public repository, facing CI that must stay free of credentials, we decided for mise tasks as the only entry points (`cluster:up|plan|down <name>` to init and apply, plan or destroy `clusters/<name>/`; `manifests:render` and `manifests:check`) and a pull request CI limited to static checks (pre-commit, `manifests:check`, kubeconform and Conftest on `rendered/`), with plans run locally, and against a Makefile with a CI plan and a kind end-to-end job per pull request, to achieve the same commands everywhere and a CI with no secret, accepting that IaC changes and runtime regressions are checked only locally.
+- Consequences:
+  - Good: CI needs no secret and cannot touch remote state.
+  - Good: every tool version is pinned in `.mise/config.toml` with a lockfile.
+  - Bad: IaC changes are not planned in CI: the author runs `cluster:plan` locally and pastes the relevant output in the pull request.
+  - Bad: runtime regressions are found only locally until a kind end-to-end job exists.
+- Confidence: high, static checks cover the rendered output that reaches clusters.
+- Confirmation: the CI workflow calls only mise tasks and pre-commit; no workflow references IaC or cloud credentials.
+- Revisit when: the bootstrap exists and a kind end-to-end job fits in pull request time.
 
-Operators and agents need the same commands to create, plan, destroy clusters and render manifests. CI must
-catch errors on pull requests without cloud credentials. Which entry points exist, and what does CI run?
-
-## Decision Drivers
-
-* One entry point per action, the same on a laptop and in CI.
-* No credential in CI for this public repository.
-* Fast pull request feedback.
-
-## Considered Options
-
-* mise tasks + static CI (pre-commit, `manifests:check`, kubeconform, Conftest)
-* Makefile + CI with `terraform plan`
-* Full end-to-end CI with a kind cluster per pull request
-
-## Decision Outcome
-
-Chosen option: "mise tasks + static CI".
-
-| Task | Action |
-| --- | --- |
-| `mise run cluster:up <name>` | init and apply `clusters/<name>/` |
-| `mise run cluster:plan <name>` | plan `clusters/<name>/` |
-| `mise run cluster:down <name>` | destroy `clusters/<name>/` |
-| `mise run manifests:render` | render every enabled component of every cluster |
-| `mise run manifests:check` | render and fail on any difference with Git |
-
-CI on pull requests: pre-commit static checks, `manifests:check`, kubeconform and Conftest on `rendered/`.
-`terraform plan` stays local.
-
-### Consequences
-
-* Good, because CI needs no secret and cannot touch remote state.
-* Good, because every tool version is pinned in `.mise/config.toml` with a lockfile.
-* Bad, because Terraform changes are not planned in CI: the author runs `cluster:plan` locally and pastes the
-  relevant output in the pull request.
-* Deferred: a kind end-to-end CI job (create cluster, bootstrap, wait for Argo CD healthy).
-
-### Confirmation
-
-The CI workflow (not yet written) calls only mise tasks and pre-commit; no workflow references Terraform
-credentials.
-
-## Pros and Cons of the Options
-
-### mise tasks + static CI
-
-* Good, because simple, safe, fast.
-* Bad, because runtime regressions are found only locally.
-
-### Makefile + CI plan
-
-* Good, because plan visible in review.
-* Bad, because credentials in a public repository's CI.
-
-### Full kind e2e per pull request
-
-* Good, because catches runtime errors.
-* Bad, because slow, and the bootstrap does not exist yet.
+Source: [RFC 0019](../../docs/rfc/0019-lifecycle-tasks-and-ci-scope.md), reviewed in https://github.com/gsuquet/infra/pull/5.
