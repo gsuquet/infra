@@ -1,0 +1,47 @@
+# Cilium namespace-label keys and digest-pinned images exceed 80 columns.
+# yamllint disable rule:line-length
+# Cluster layer: default-deny for every namespace labelled
+# infra.gsuquet.com/network-policy=default-deny, plus the baseline allows every
+# such pod gets (DNS through the Cilium DNS proxy, kube-apiserver).
+---
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: baseline-default-deny
+spec:
+  description: Default-deny ingress and egress for policy-labelled namespaces; allow DNS and kube-apiserver egress.
+  endpointSelector:
+    matchLabels:
+      k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/network-policy: default-deny
+    matchExpressions:
+      # Belt and braces: kube-system is never policed by this rule, even if
+      # labelled.
+      - key: k8s:io.kubernetes.pod.namespace
+        operator: NotIn
+        values: [kube-system]
+  enableDefaultDeny:
+    ingress: true
+    egress: true
+  # An ingress section is needed to switch ingress to default-deny. An empty
+  # rule carries no peer, so it allows nothing (Cilium semantics, unlike
+  # Kubernetes NetworkPolicy where `ingress: [{}]` allows everything).
+  ingress:
+    - {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          # L7 DNS rule: sends lookups through the DNS proxy, which toFQDNs
+          # needs.
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver

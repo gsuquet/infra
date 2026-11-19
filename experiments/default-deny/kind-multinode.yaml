@@ -1,0 +1,17 @@
+# Cilium namespace-label keys and digest-pinned images exceed 80 columns.
+# yamllint disable rule:line-length
+# Two nodes on purpose: the control plane keeps its NoSchedule taint, so every
+# workload lands on the worker and kube-apiserver -> webhook traffic crosses
+# nodes (the realistic Talos / multi-node case, not the host -> local pod case).
+---
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: exp-default-deny
+networking:
+  disableDefaultCNI: true
+  kubeProxyMode: none
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+  - role: worker
+    image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5

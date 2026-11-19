@@ -1,0 +1,15 @@
+# Cilium namespace-label keys and digest-pinned images exceed 80 columns.
+# yamllint disable rule:line-length
+# Single node (default): kind drops the control-plane taint, so webhook pods
+# share the node with kube-apiserver. See kind-multinode.yaml for the
+# cross-node variant (KIND_CONFIG=kind-multinode.yaml ./run.sh).
+---
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: exp-default-deny
+networking:
+  disableDefaultCNI: true
+  kubeProxyMode: none
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5

@@ -1,0 +1,42 @@
+# Tenant onboarding as infra would render it (sources limited to the tenant
+# repo,
+# destinations limited to tenant namespaces, no cluster-scoped resources, policy
+# kinds blacklisted). The test source is an in-cluster Helm repo standing in for
+# https://github.com/gsuquet/gitops.git.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: tenant-a
+  namespace: argocd
+spec:
+  sourceRepos:
+    - http://charts.exp-fixtures.svc.cluster.local
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: tenant-a
+  clusterResourceWhitelist: []
+  namespaceResourceBlacklist:
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    # Every namespaced Cilium kind (CiliumNetworkPolicy, CiliumEnvoyConfig,
+    # CiliumLocalRedirectPolicy, ...) can open or redirect traffic.
+    - group: cilium.io
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tenant-a-bypass
+  namespace: argocd
+spec:
+  project: tenant-a
+  source:
+    repoURL: http://charts.exp-fixtures.svc.cluster.local
+    chart: tenant-bypass
+    targetRevision: 0.1.0
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tenant-a
+  syncPolicy:
+    automated: {}

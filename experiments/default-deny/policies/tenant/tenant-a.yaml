@@ -1,0 +1,52 @@
+# Tenant layer, rendered by infra from gitops/tenants/<tenant>.yaml: intra-
+# namespace
+# traffic plus ingress from gateway namespaces. Tenants cannot add policies
+# themselves
+# (AppProject namespaceResourceBlacklist), so this is their whole allow profile.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: tenant-intra-namespace
+  namespace: tenant-a
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {}
+  egress:
+    - toEndpoints:
+        - {}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: tenant-gateway-ingress
+  namespace: tenant-a
+spec:
+  endpointSelector: {}
+  ingress:
+    # Namespace labels, never pod labels: a tenant controls its pod labels but
+    # cannot label namespaces (cluster-scoped, blocked by the AppProject).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: gateway
+    - fromEntities:
+        - ingress
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: tenant-kubelet-probes
+  namespace: tenant-a
+spec:
+  description: Kubelet probes (reserved:host) on any port.
+  endpointSelector: {}
+  ingress:
+    # Needed under allow-localhost=policy. Infra does not know tenant probe
+    # ports, so the whole host identity is allowed. Tenants cannot register
+    # webhooks (cluster-scoped) and host-network pods are rejected by Pod
+    # Security Admission, so "host" here is the local kubelet (plus a
+    # same-node kube-apiserver on single-node clusters).
+    - fromEntities:
+        - host

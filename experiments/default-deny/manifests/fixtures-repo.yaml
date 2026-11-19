@@ -1,0 +1,63 @@
+# Cilium namespace-label keys and digest-pinned images exceed 80 columns.
+# yamllint disable rule:line-length
+# Static Helm repository (index.yaml + chart archive from the ConfigMap
+# "chart-repo", created by run.sh) served by nginx.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: charts
+  namespace: exp-fixtures
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: charts
+  template:
+    metadata:
+      labels:
+        app: charts
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.29.3-alpine@sha256:b3c656d55d7ad751196f21b7fd2e8d4da9cb430e32f646adcf92441b72f82b14
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: repo
+              mountPath: /usr/share/nginx/html
+      volumes:
+        - name: repo
+          configMap:
+            name: chart-repo
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: charts
+  namespace: exp-fixtures
+spec:
+  selector:
+    app: charts
+  ports:
+    - port: 80
+      targetPort: 80
+---
+# Test-only: lets the Argo CD repo-server reach the fixture repo.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-repo-server-fixtures
+  namespace: argocd
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-repo-server
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: exp-fixtures
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP

@@ -1,0 +1,24 @@
+# cilium 1.20.5, kube-proxy replacement on kind.
+---
+kubeProxyReplacement: true
+k8sServiceHost: exp-default-deny-control-plane
+k8sServicePort: 6443
+ipam:
+  mode: kubernetes
+operator:
+  replicas: 1
+# Default mode: only endpoints selected by a policy are in default-deny.
+policyEnforcementMode: default
+hubble:
+  enabled: true
+  relay:
+    enabled: false
+  ui:
+    enabled: false
+extraConfig:
+  # Police host -> local pod traffic too. By default Cilium always allows it
+  # ("Kubernetes will automatically allow all communication from the local
+  # host of all local endpoints", docs: security/policy/layer3), which on one
+  # node lets kube-apiserver reach webhooks with no rule. Kubelet probes then
+  # need explicit fromEntities: host allows (policies/kubelet-probes/).
+  allow-localhost: policy

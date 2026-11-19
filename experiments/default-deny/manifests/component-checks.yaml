@@ -1,0 +1,90 @@
+# Objects whose creation or status proves a component works under policy.
+# cert-manager: creating an Issuer goes through the validating webhook.
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned
+  namespace: tenant-a
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: probe
+  namespace: tenant-a
+spec:
+  secretName: probe-tls
+  commonName: probe.tenant-a.svc
+  dnsNames:
+    - probe.tenant-a.svc
+  issuerRef:
+    name: selfsigned
+    kind: Issuer
+---
+# ACME egress: Ready once the account is registered with Let's Encrypt staging.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-staging-account
+    # Account registration does not need a working solver, but cert-manager
+    # validates referenced secrets: an HTTP-01 stub keeps the check self-
+    # contained.
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: none
+---
+# ESO: the store every namespace uses is named "secrets"; on kind it is the fake
+# provider.
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: secrets
+  namespace: tenant-a
+spec:
+  provider:
+    fake:
+      data:
+        - key: demo/db
+          value: dummy-password
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: db
+  namespace: tenant-a
+spec:
+  refreshInterval: 1m
+  secretStoreRef:
+    name: secrets
+    kind: SecretStore
+  target:
+    name: db
+  data:
+    - secretKey: password
+      remoteRef:
+        key: demo/db
+---
+# Argo CD repo-server egress to github.com: a manual-sync Application only needs
+# a successful comparison (status Synced or OutOfSync, no ComparisonError).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: github-probe
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/argoproj/argocd-example-apps.git
+    targetRevision: HEAD
+    path: guestbook
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tenant-b

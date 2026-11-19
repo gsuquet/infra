@@ -1,0 +1,145 @@
+# Cilium namespace-label keys and digest-pinned images exceed 80 columns.
+# yamllint disable rule:line-length
+# Component layer: Argo CD (namespace argocd).
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-intra-namespace
+  namespace: argocd
+spec:
+  description: server, controller, applicationset, repo-server and redis talk to each other.
+  endpointSelector: {}
+  ingress:
+    # A peer selector without a namespace label means "this namespace" in a CNP.
+    - fromEndpoints:
+        - {}
+  egress:
+    - toEndpoints:
+        - {}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-repo-server-git
+  namespace: argocd
+spec:
+  description: repo-server fetches rendered manifests from GitHub only.
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-repo-server
+  egress:
+    - toFQDNs:
+        - matchName: github.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "22"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-server-ingress
+  namespace: argocd
+spec:
+  description: UI/API reachable from gateway namespaces only.
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-server
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: gateway
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # Cilium's own Gateway API implementation proxies through a node-local
+    # Envoy whose traffic carries the reserved:ingress identity.
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+# Metrics: one policy per workload, each opening only that workload's metrics
+# port. A namespace-wide selector would also open 8080 on argocd-server, which
+# is its API/UI port, not a metrics port.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-metrics-controller
+  namespace: argocd
+spec:
+  description: application-controller metrics for monitoring namespaces.
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-application-controller
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: monitoring
+      toPorts:
+        - ports:
+            - port: "8082"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-metrics-server
+  namespace: argocd
+spec:
+  description: server metrics for monitoring namespaces (8080 stays gateway-only).
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-server
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: monitoring
+      toPorts:
+        - ports:
+            - port: "8083"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-metrics-repo-server
+  namespace: argocd
+spec:
+  description: repo-server metrics for monitoring namespaces.
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-repo-server
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: monitoring
+      toPorts:
+        - ports:
+            - port: "8084"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-metrics-applicationset
+  namespace: argocd
+spec:
+  description: applicationset-controller metrics for monitoring namespaces.
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-applicationset-controller
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: monitoring
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

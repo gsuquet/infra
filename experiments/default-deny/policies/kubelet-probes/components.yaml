@@ -1,0 +1,78 @@
+# Cilium namespace-label keys and digest-pinned images exceed 80 columns.
+# yamllint disable rule:line-length
+# Kubelet probes under allow-localhost=policy (values/cilium.yaml). Kubelet
+# probes come from the reserved:host identity; once host traffic is policed,
+# each pod must allow it on its probe ports. In the plan these rules ship with
+# each component; the experiment applies them in phase A with the baseline so
+# readiness is not the variable when the webhook checks run.
+#
+# Ports come from the rendered charts (argo-cd 10.18.1, cert-manager v1.21.3,
+# external-secrets 2.15.0). Webhook serving ports (10250) are deliberately NOT
+# listed: on one node kube-apiserver also carries the host identity, so opening
+# 10250 to host would hide the kube-apiserver webhook rule again.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd-kubelet-probes
+  namespace: argocd
+spec:
+  description: Kubelet probes (reserved:host) for server 8080, repo-server 8084, application-controller 8082.
+  endpointSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [argocd-server, argocd-repo-server, argocd-application-controller]
+  ingress:
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+            - port: "8082"
+              protocol: TCP
+            - port: "8084"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cert-manager-kubelet-probes
+  namespace: cert-manager
+spec:
+  description: Kubelet probes (reserved:host) for controller 9403 and webhook 6080.
+  endpointSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [cert-manager, webhook]
+  ingress:
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "9403"
+              protocol: TCP
+            - port: "6080"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: external-secrets-kubelet-probes
+  namespace: external-secrets
+spec:
+  description: Kubelet probes (reserved:host) for webhook and cert-controller 8081.
+  endpointSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [external-secrets-webhook, external-secrets-cert-controller]
+  ingress:
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "8081"
+              protocol: TCP
