@@ -1,6 +1,6 @@
 # Experiment: Cilium clusterwide default-deny
 
-Status: **partial.** Run 3 (commit `046f610`, Cilium default `allow-localhost`) passed 33/33 checks on single-node kind, but in that run the webhook checks passed with no allow at all, so **the webhook ingress rule (kube-apiserver -> pod:10250) is untested**. After review the script switched to `allow-localhost: policy`, which makes the webhook rule testable on one node, and added checks for Argo CD metrics, Pod Security Admission, pod-label spoofing and late-policy recovery. That run 4 **has not been executed yet** (see [Run 4: pending](#run-4-pending)).
+Status: **single-node verified.** Run 3 (commit `046f610`, Cilium default `allow-localhost`) passed 33/33 checks, but its webhook checks passed with no allow at all, so the webhook rule was untested. Run 4 (commit `6e2ee96`, `allow-localhost: policy`, executed 2026-11-19) passed **42/42 checks with 0 mismatches**: the webhooks are denied without the component CNP and work with it, the Argo CD metrics split holds, PSA rejects host-network tenant pods, a pod label cannot spoof a namespace label, and Argo CD recovers from a late policy without a restart (see [Run 4](#run-4-commit-6e2ee96-allow-localhost-policy)). Still open: cross-node kube-apiserver identity (multi-node), GKE, DNS-01.
 
 Scripts: [`experiments/default-deny/`](../../../experiments/default-deny/). Run `experiments/default-deny/run.sh`: it creates the kind cluster `exp-default-deny`, runs every check, writes evidence to `experiments/default-deny/out/` (git-ignored) and always deletes the cluster.
 
@@ -26,7 +26,9 @@ Check the settled network-policy design before it goes into the component catalo
 | external-secrets chart | 2.15.0 |
 | Probe images | `agnhost:2.53@sha256:99c6b4bb…`, `nginx:1.29.3-alpine@sha256:b3c656d5…` |
 
-Host: Colima (4 CPUs, 7.7 GiB), with another 2-node kind cluster already running. `run.sh` now refuses to start unless Docker `MemTotal` minus the memory used by existing kind nodes leaves `MIN_FREE_GIB_PER_NODE` (default 4 GiB) per new node, and prints the existing nodes.
+Run 4 used exactly these versions (`out/preflight.txt`: kind v0.33.0, kubectl v1.37.2, helm v4.3.2, jq 1.8.2, yq v4.53.6; chart `appVersion`s read with `helm show chart`: Cilium 1.20.5, Argo CD v3.6.1, external-secrets v2.15.0).
+
+Host: Colima (4 CPUs, 7.7 GiB), with another 2-node kind cluster already running. Run 4 preflight: `memory: total=7920MiB used-by-kind=2014MiB free=5905MiB need=4096MiB (1 node(s) x 4GiB)`. `run.sh` refuses to start unless Docker `MemTotal` minus the memory used by existing kind nodes leaves `MIN_FREE_GIB_PER_NODE` (default 4 GiB) per new node, and prints the existing nodes.
 
 All charts are installed the way the plan installs them: `helm template` piped into `kubectl apply --server-side`. Helm hooks are therefore plain resources, as in the rendered-manifests pattern.
 
@@ -41,7 +43,7 @@ The run has four phases:
 
 All of these are **namespace** labels. Namespaces are cluster-scoped, and the tenant AppProject allows no cluster-scoped resources, so tenants cannot set them. Pod labels are controlled by tenants and must never be used as a trust boundary across namespaces.
 
-Whether Cilium ignores a **pod** label that copies the namespace-label key (`io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: gateway` on a tenant pod) is **unverified**. The Cilium pages on Kubernetes constructs and identity-relevant labels do not say. Run 4 checks it (D9 to D11: a spoofed `tenant-b` pod, given an egress allow by the harness, must still be denied by argocd-server and tenant-a at ingress).
+Cilium ignores a **pod** label that copies the namespace-label key (run 4, D9 to D11). The `tenant-b/spoof` pod carried `io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: gateway` as a pod label, but its Cilium identity had no `role` label at all (only the real namespace labels `network-policy`, `tenant`, `pod-security.*`). With an egress allow from the harness, Hubble showed `EGRESS ALLOWED` at the source and `INGRESS DENIED` at argocd-server and tenant-a. The Cilium pages on Kubernetes constructs and identity-relevant labels do not document this filtering, so it is observed behaviour of Cilium 1.20.5, not a documented guarantee: keep D9 to D11 in the regression checks.
 
 | Label | Values | Set on | Used by |
 | --- | --- | --- | --- |
@@ -91,7 +93,7 @@ spec:
 | argocd | repo-server egress `toFQDNs: github.com` on 443 and 22 | Git fetch of rendered manifests. Other hosts are denied (B13: `repo-server -> 172.65.251.78:443 (world) Policy denied`) |
 | argocd | server ingress on 8080 from `role=gateway` namespaces and from the `ingress` entity | UI/API through the gateway. `ingress` is the identity of Cilium's own Gateway API Envoy (not exercised here) |
 | argocd | ingress from `role=monitoring`, **one CNP per workload**: application-controller 8082, server 8083, repo-server 8084, applicationset-controller 8080 | metrics. Run 3 used one namespace-wide CNP for all four ports, which also opened argocd-server's API port 8080 to monitoring; review caught it. Run 4 adds B15 (server 8083), B16 (applicationset 8080) and the negative B17 (monitoring -> argocd-server API) |
-| cert-manager | webhook pod ingress `fromEntities: kube-apiserver` on **10250** | admission webhook. The Service port is 443, but policy sees the pod port after the kube-proxy replacement translates it |
+| cert-manager | webhook pod ingress `fromEntities: kube-apiserver` on **10250** | admission webhook. The Service port is 443, but policy sees the pod port after the kube-proxy replacement translates it (run 4 phase A: `10.244.0.237:51502 (host) <> cert-manager-webhook…:10250 Policy denied DROPPED`) |
 | cert-manager | controller egress `toFQDNs` `acme-v02.api.letsencrypt.org`, `acme-staging-v02.api.letsencrypt.org`, `api.cloudflare.com` on 443 | ACME and DNS-01 through Cloudflare |
 | cert-manager | ingress on 9402 from `role=monitoring` | metrics |
 | external-secrets | webhook pod ingress `fromEntities: kube-apiserver` on **10250** | admission webhook |
@@ -178,23 +180,83 @@ Key evidence:
 
   On one node, kube-apiserver's IP carries the `host` identity plus the `kube-apiserver` label. A kube-apiserver on another node gets identity 7 (`kube-apiserver` + `remote-node`). So `fromEntities: [kube-apiserver]` should cover both cases without opening ingress to every `remote-node`. This is an inference from the identity table and is **not tested across nodes**.
 
-### Run 4: pending
+### Run 4 (commit `6e2ee96`, `allow-localhost: policy`)
 
-Run 4 is the current `run.sh`. It has **not been executed**: the review stage did not allow creating a cluster. Changes and expected results:
+Executed 2026-11-19 on single-node kind, unmodified `run.sh` (no script bug hit), exit code 0, cluster deleted by the `EXIT` trap afterwards. `out/cilium-config.txt` confirms `allow-localhost=policy`, `enable-policy=default`, `kube-proxy-replacement=true`. `out/results.txt`:
 
-| Check | Expected | What it proves |
-| --- | --- | --- |
-| A5, A6 | **fail** (was pass) | with `allow-localhost: policy`, kube-apiserver (host identity on one node) is denied at the webhook pod until the component CNP allows it. Webhook pods are Ready first (kubelet-probe CNPs), so the failure is policy, not readiness |
-| B1, B2, B4 | pass | the `fromEntities: kube-apiserver` -> 10250 rules alone make both webhooks work |
-| B0 | pass | Argo CD recovers once its CNPs land, without a restart (late policy) |
-| B15, B16 | pass | argocd-server 8083 and applicationset 8080 metrics reachable from monitoring |
-| B17 | fail | monitoring cannot reach argocd-server's API on 8080 |
-| D2 | fail | the hard deny now selects only namespaces with `infra.gsuquet.com/tenant` |
-| D7 / D8 | fail / pass | a `hostNetwork` pod is rejected in tenant-a by PSA baseline (`--dry-run=server`), accepted in the unlabelled control namespace |
-| D9, D10 | fail | a tenant-b pod carrying the pod label `io.cilium.k8s.namespace.labels.infra.gsuquet.com/role: gateway` cannot reach argocd-server or tenant-a |
-| D11 | pass | those flows were dropped at destination ingress, not source egress, so D9 and D10 are not vacuous |
+```text
+id   expected  actual  verdict  description
+A1   pass      pass    OK       tenant-a DNS lookup through DNS proxy
+A2   pass      pass    OK       tenant-a -> kube-apiserver (baseline)
+A3   fail      fail    OK       tenant-a client -> tenant-a server (same namespace, denied)
+A4   fail      fail    OK       tenant-a -> world (github.com:443)
+A5   fail      fail    OK       cert-manager webhook without allow (allow-localhost=policy)
+A6   fail      fail    OK       ESO webhook without allow (allow-localhost=policy)
+A7   fail      fail    OK       argocd: compare github.com repo without component policies
+B0   pass      pass    OK       argocd recovers without restart once its CNPs land (late policy)
+B1   pass      pass    OK       cert-manager startupapicheck Job completes (webhook via kube-apiserver entity)
+B2   pass      pass    OK       cert-manager: self-signed Certificate Ready
+B3   pass      pass    OK       cert-manager: ACME ClusterIssuer registered with LE staging (toFQDNs)
+B4   pass      pass    OK       ESO: ExternalSecret from SecretStore 'secrets' synced
+B5   pass      pass    OK       argocd: repo-server compares github.com repo (toFQDNs github.com)
+B6   pass      pass    OK       monitoring -> cert-manager metrics :9402
+B7   pass      pass    OK       monitoring -> external-secrets metrics :8080
+B8   pass      pass    OK       monitoring -> argocd repo-server metrics :8084
+B9   pass      pass    OK       monitoring -> argocd application-controller metrics :8082
+B15  pass      pass    OK       monitoring -> argocd-server metrics :8083
+B16  pass      pass    OK       monitoring -> argocd applicationset metrics :8080
+B17  fail      fail    OK       monitoring -> argocd-server API :8080 (metrics policy must not open it)
+B10  fail      fail    OK       tenant-b -> cert-manager metrics (not a monitoring namespace)
+B11  pass      pass    OK       gateway -> argocd-server :80
+B12  fail      fail    OK       tenant-b -> argocd-server :80
+B13  fail      fail    OK       argocd repo-server egress to a non-allowed FQDN (gitlab.com)
+B14  pass      pass    OK       argocd repo-server egress to github.com
+C1   fail      fail    OK       gateway -> tenant-a server before tenant policy
+C2   pass      pass    OK       tenant-a client -> tenant-a server (intra-namespace)
+C3   pass      pass    OK       gateway -> tenant-a server
+C4   fail      fail    OK       tenant-b -> tenant-a server
+C5   fail      fail    OK       tenant-a -> world still denied
+C6   fail      fail    OK       tenant-a -> argocd-server (platform namespace)
+D1   pass      pass    OK       tenant-a CNP 'toEntities: world' opens world egress (union bypass works)
+D2   fail      fail    OK       tenant-scoped clusterwide egressDeny 1.0.0.1 beats the tenant allow
+D3   pass      pass    OK       control: 1.1.1.1 still reachable through the tenant allow
+D4   fail      fail    OK       after removing the bypass, world egress is denied again
+D5   pass      pass    OK       Argo CD refuses the CNP: 'not permitted in project'
+D6   fail      fail    OK       tenant-bypass CNP was not created in tenant-a
+D7   fail      fail    OK       hostNetwork pod in tenant-a rejected (PSA baseline)
+D8   pass      pass    OK       control: same pod accepted in exp-fixtures (no PSA label)
+D9   fail      fail    OK       spoofed pod (role=gateway pod label) -> argocd-server
+D10  fail      fail    OK       spoofed pod (role=gateway pod label) -> tenant-a server
+D11  pass      pass    OK       spoof flows denied at destination ingress, not source egress
+mismatches: 0
+```
 
-Until run 4 passes, the webhook profile, the per-workload metrics split, the PSA control and the spoofing answer are **unverified**. If a probe port in `policies/kubelet-probes/` is wrong, phase A stalls at the webhook rollout or B rollouts time out. That is the first thing to check.
+Evidence for the checks run 4 added or flipped:
+
+- **Webhooks fail for policy reasons, not readiness (A5, A6).** Phase A pods were all `1/1 Running`, webhook rollouts succeeded (kubelet-probe CNPs on probe ports work), yet:
+
+  ```text
+  failed calling webhook "webhook.cert-manager.io": ... dial tcp 10.96.14.183:443: connect: connection timed out
+  failed calling webhook "validate.secretstore.external-secrets.io": ... context deadline exceeded
+  10.244.0.237:51502 (host) <> cert-manager/cert-manager-webhook-bf7f8b575-wst2t:10250 (ID:24216) Policy denied DROPPED (TCP Flags: SYN)
+  ```
+
+  `10.244.0.237` is the node's `cilium_host` address (`Proxy Status: OK, ip 10.244.0.237`). The phase A `startupapicheck` Job failed the same way and ended in `Error`.
+- **The `fromEntities: kube-apiserver` -> 10250 rule alone makes both webhooks work (B1, B2, B4).** Only the component CNPs were added between A5/A6 and B1. Caveat: on one node kube-apiserver's IP has the `host` identity (ID 1) **plus** the `kube-apiserver` label (`out/identities.txt`, same as run 3), so on one node this rule is equivalent to `fromEntities: host` on 10250. Run 4 proves the rule is needed and sufficient, not that it is narrower than `host`.
+- **Argo CD recovers from a late policy without a restart (B0).** github-probe was created at the end of phase A and stayed uncompared for 90 s (A7; phase A Hubble: 677 `argocd-* <> argocd-redis:6379 Policy denied DROPPED` lines). After `kubectl apply -f policies/components/`, it reached `OutOfSync` with no `ComparisonError` inside the 300 s window, before any restart. File timestamps put B0 at under about 80 s; the script does not record the exact time. Limit: the Application had no `ComparisonError` yet when the policies landed, so recovery from an Application that had already recorded one is not shown. cert-manager's `startupapicheck` still needed recreating (it is a Job that exhausted its retries).
+- **Metrics split (B15, B16, B17).** monitoring reaches argocd-server 8083 and applicationset 8080, but not argocd-server's API on 8080: the per-workload CNPs do not open the API port.
+- **PSA (D7, D8).** `pods "hostnet" is forbidden: violates PodSecurity "baseline:v1.37": host namespaces (hostNetwork=true)` in tenant-a; the same manifest passes `--dry-run=server` in the unlabelled `exp-fixtures`.
+- **Pod-label spoofing (D9 to D11).** Identity labels of `tenant-b/spoof` (`out/phaseD-spoof.txt`, abridged): `k8s:app=spoof`, `k8s:io.cilium.k8s.namespace.labels.infra.gsuquet.com/network-policy=default-deny`, `…/tenant=tenant-b`, `k8s:io.kubernetes.pod.namespace=tenant-b`. No `role=gateway`. Hubble:
+
+  ```text
+  tenant-b/spoof:50522 (ID:30782) -> argocd/argocd-server-…:8080 (ID:16829) policy-verdict:L3-Only EGRESS ALLOWED (TCP Flags: SYN)
+  tenant-b/spoof:50522 (ID:30782) <> argocd/argocd-server-…:8080 (ID:16829) policy-verdict:none INGRESS DENIED (TCP Flags: SYN)
+  tenant-b/spoof:39130 (ID:30782) -> tenant-a/server:8080 (ID:51301) policy-verdict:L3-Only EGRESS ALLOWED (TCP Flags: SYN)
+  tenant-b/spoof:39130 (ID:30782) <> tenant-a/server:8080 (ID:51301) policy-verdict:none INGRESS DENIED (TCP Flags: SYN)
+  ```
+
+- **AppProject (D5).** `resource cilium.io:CiliumNetworkPolicy is not permitted in project tenant-a`, unchanged from run 3.
+- **Restart noise.** Phase B Hubble shows `argocd-server … <> 10.244.0.210:6379 (world) … EGRESS DENIED (TCP Flags: ACK, FIN)`: FINs of connections to the old redis pod after the rollout restart, whose IP no longer maps to an endpoint. Not a policy gap.
 
 ## What failed
 
@@ -204,7 +266,7 @@ Until run 4 passes, the webhook profile, the per-workload metrics split, the PSA
 
 ## Pitfalls
 
-1. **Host to local pod traffic is allowed by default.** The Cilium layer-3 page states it: "Kubernetes will automatically allow all communication from the local host of all local endpoints", and the agent option `--allow-localhost=policy` turns it off ([Cilium docs: layer 3, entities](https://docs.cilium.io/en/stable/security/policy/layer3/)). With the default, a one-node cluster hides webhook rules, because kube-apiserver carries the host identity (run 3, A5 and A6). Run 4 sets `extraConfig.allow-localhost: policy`. Every policed pod then needs an explicit `fromEntities: host` allow on its kubelet probe ports, and that allow must not cover webhook ports. On a production cluster the same switch also stops host-network pods on a node from reaching every local pod. Whether to keep it beyond the experiment is an open question.
+1. **Host to local pod traffic is allowed by default.** The Cilium layer-3 page states it: "Kubernetes will automatically allow all communication from the local host of all local endpoints", and the agent option `--allow-localhost=policy` turns it off ([Cilium docs: layer 3, entities](https://docs.cilium.io/en/stable/security/policy/layer3/)). With the default, a one-node cluster hides webhook rules, because kube-apiserver carries the host identity (run 3, A5 and A6). Run 4 sets `extraConfig.allow-localhost: policy`, and the webhooks are then denied until their CNP lands (run 4, A5 and A6). Every policed pod then needs an explicit `fromEntities: host` allow on its kubelet probe ports, and that allow must not cover webhook ports. The probe ports in `policies/kubelet-probes/` were correct in run 4 (every pod Ready in phase A; argocd-redis and applicationset-controller needed no host allow). On a production cluster the same switch also stops host-network pods on a node from reaching every local pod. Whether to keep it beyond the experiment is an open question.
 2. **Host-network pods are not Cilium endpoints.** CNPs and CCNPs do not select them, for example Talos static control-plane pods or a webhook with `hostNetwork: true`. Policing them needs Cilium host policies (host firewall), which is a separate feature with its own known issues ([Cilium docs: host policies](https://docs.cilium.io/en/stable/security/policy/host/)). As sources, they appear as `host` or `remote-node`. A tenant Deployment with `hostNetwork: true` would escape default-deny entirely, and the AppProject cannot stop it (it filters kinds, not pod specs). Tenant namespaces therefore need Pod Security Admission `baseline` or stricter, which rejects `hostNetwork`, `hostPort` and privileged pods (run 4, D7).
 3. **`reserved:remote-node` is broad.** Allowing `remote-node` lets in every node and every host-network pod on other nodes. Prefer `kube-apiserver`, which is a label on top of `remote-node` (identity 7). North-south traffic forwarded between nodes can also arrive as `remote-node` in native routing, and as `world` in tunnel mode ([Cilium docs: caveats](https://docs.cilium.io/en/stable/security/policy/caveats/)). Cloudflare Tunnel avoids this, because cloudflared is an in-cluster client that enters through the gateway namespace.
 4. **DNS proxy.** The baseline L7 DNS rule sends every lookup from a policed pod through the Cilium agent's DNS proxy. That is a requirement for `toFQDNs` ([Cilium docs: layer 3, DNS-based](https://docs.cilium.io/en/stable/security/policy/layer3/)). Effects:
@@ -221,10 +283,10 @@ Until run 4 passes, the webhook profile, the per-workload metrics split, the PSA
 
 ## Conclusions for the plan
 
-- **The design holds for what run 3 tested; the webhook path is unverified.** A label-selected CCNP default-deny, plus a per-component and a per-tenant CNP allow profile, gave the expected isolation for intra-namespace, Git, ACME, metrics, gateway and tenant flows. The webhook rule, the metrics split, the PSA control and pod-label spoofing wait on run 4.
-- **Each component ships its policy.** `gitops/components/<name>/` should include its CNPs, kubelet-probe allows included, in the same rendered directory. If the baseline lands before a component's policy, the component breaks while its pods stay Ready (phase A). Whether components recover by themselves once a late CNP lands is unverified until run 4 (B0, Argo CD only). cert-manager's `startupapicheck` Job does not recover: it exhausted its retries in phase A and had to be recreated. The order "component CNPs before the baseline" was not tested. Shipping CNPs in the same or an earlier sync wave is a recommendation, not a measured requirement.
+- **The design holds on single-node kind (run 4, 42/42).** A label-selected CCNP default-deny, plus a per-component and a per-tenant CNP allow profile, gave the expected isolation for intra-namespace, Git, ACME, metrics, gateway and tenant flows, and the `kube-apiserver` -> 10250 webhook rule is both needed and sufficient. On one node that rule cannot be told apart from `fromEntities: host`; its narrower meaning across nodes is still an inference.
+- **Each component ships its policy.** `gitops/components/<name>/` should include its CNPs, kubelet-probe allows included, in the same rendered directory. If the baseline lands before a component's policy, the component breaks while its pods stay Ready (phase A). Argo CD recovered by itself once its late CNPs landed (run 4, B0), for an Application that had not yet recorded a `ComparisonError`. cert-manager's `startupapicheck` Job does not recover: it exhausted its retries in phase A and had to be recreated. The order "component CNPs before the baseline" was not tested. Shipping CNPs in the same or an earlier sync wave is a recommendation, not a measured requirement.
 - **Bootstrap boundary.** Terraform applies `rendered/argocd`. If the baseline CCNP is applied before Argo CD's own CNPs, Argo CD cannot reach redis or GitHub and cannot adopt anything. Ship the Argo CD CNPs inside `rendered/argocd`, and give the baseline CCNP its own cluster-layer component (for example `network-policy`) that Argo CD applies after it is healthy. **This adds a component to the settled baseline list** (see open questions).
-- **Tenants are blocked by Argo CD and Pod Security Admission, not by Cilium.** Cilium cannot stop an allow it is given, so the AppProject `namespaceResourceBlacklist` (`networking.k8s.io/NetworkPolicy`, `cilium.io/*`) is the control for policy objects, and it works (D5, D6). It does not cover pod specs: a `hostNetwork: true` pod is not a Cilium endpoint and escapes every policy. Tenant onboarding must also label tenant namespaces with `pod-security.kubernetes.io/enforce: baseline` (or `restricted`), and Conftest must fail a tenant namespace without it (run 4, D7, pending). Tenant Kubernetes RBAC must deny the same kinds if tenants ever get `kubectl` access.
+- **Tenants are blocked by Argo CD and Pod Security Admission, not by Cilium.** Cilium cannot stop an allow it is given, so the AppProject `namespaceResourceBlacklist` (`networking.k8s.io/NetworkPolicy`, `cilium.io/*`) is the control for policy objects, and it works (D5, D6). It does not cover pod specs: a `hostNetwork: true` pod is not a Cilium endpoint and escapes every policy. Tenant onboarding must also label tenant namespaces with `pod-security.kubernetes.io/enforce: baseline` (or `restricted`), and Conftest must fail a tenant namespace without it (run 4, D7 and D8: PSA baseline rejects the `hostNetwork` pod). Pod labels cannot forge namespace labels (run 4, D9 to D11). Tenant Kubernetes RBAC must deny the same kinds if tenants ever get `kubectl` access.
 - **Use clusterwide `egressDeny` for hard limits, scoped to tenant namespaces.** Tenants cannot override a deny, and neither can anyone else (D2). Select on `infra.gsuquet.com/tenant` existing, never on every policed namespace. On GKE, pods get Workload Identity tokens from the GKE metadata server at `169.254.169.254`. ESO needs that if the secrets backend becomes GCP Secret Manager, and a blanket deny could not be lifted for it afterwards. A tenant that itself needs Workload Identity would need its own exception design. Candidates: the metadata IP and maybe the node CIDRs, for tenants only.
 - **Readiness does not prove policy.** The deferred kind e2e CI job should reuse this script's functional checks (webhook call, Git compare, metrics scrape).
 - **GKE needs its own run.** GKE Dataplane V2 accepts `CiliumClusterwideNetworkPolicy` ([GKE docs: Dataplane V2](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/dataplane-v2)). Cilium warns that `kube-apiserver` may not work for ingress on GKE ([Cilium docs: layer 3](https://docs.cilium.io/en/stable/security/policy/layer3/)). Whether GKE supports `toFQDNs`, DNS L7 rules and `enableDefaultDeny` is **unverified**. Expect a GKE variant for webhook ingress (control-plane CIDR) and FQDN egress.
@@ -233,7 +295,7 @@ Until run 4 passes, the webhook profile, the per-workload metrics split, the PSA
 
 1. **Baseline kube-apiserver egress.** Should every pod get it, tenants included? Most tenant apps never call the API. A tenant-only profile without it would shrink the attack surface. The settled plan gives it to everyone.
 2. **Unlabelled namespaces.** Add a `ValidatingAdmissionPolicy` that rejects namespaces without `infra.gsuquet.com/network-policy`, so namespaces outside Git are covered too, or label them from bootstrap?
-3. **Run 4.** Run the current `run.sh` on a host that passes the memory gate. It is the check the webhook profile still needs. Multi-node is optional after that: it only confirms the cross-node `kube-apiserver` identity, which the first Talos Pi cluster can also show.
+3. **Multi-node.** Run 4 passed on one node. The remaining gap is the cross-node `kube-apiserver` identity (identity 7, `kube-apiserver` + `remote-node`), where `fromEntities: kube-apiserver` should stop being equivalent to `host`. Run `KIND_CONFIG=kind-multinode.yaml run.sh` on a host with 8 GiB free for kind, or check it on the first Talos Pi cluster.
 4. **`network-policy` as a baseline component.** The bootstrap order needs the baseline CCNP in its own cluster-layer component. That adds a sixth baseline component to the settled list (gateway-api-crds, cilium, argocd, cert-manager, external-secrets). Accept, or fold the CCNP into the `cilium` component (which GKE skips, so GKE would need it elsewhere)?
 5. **`allow-localhost: policy` beyond the experiment.** Keep it on kind and Talos? It closes host-network to local pod traffic, but every component must then ship correct kubelet-probe allows, and a wrong port shows up as a NotReady pod. Whether GKE Dataplane V2 exposes the option is **unverified**.
 6. **Pod Security Admission level for tenants.** `baseline` is enough to block host-network pods. `restricted` is stricter but breaks images that run as root. The experiment enforces `baseline` and warns on `restricted`.
