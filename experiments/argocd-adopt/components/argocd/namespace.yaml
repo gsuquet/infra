@@ -1,0 +1,8 @@
+# Copied next to the rendered chart: the chart does not render its namespace.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false

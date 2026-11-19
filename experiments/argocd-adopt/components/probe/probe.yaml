@@ -1,0 +1,27 @@
+# Field-manager probe. The bootstrap applies probe-kubectl with the field
+# manager "kubectl" and probe-argocd with "argocd-controller". A later
+# commit removes the key b from both: only the field that Argo CD owns alone
+# goes away.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: probe
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: probe-kubectl
+  namespace: probe
+data:
+  a: "kept"
+  b: "removed-in-git"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: probe-argocd
+  namespace: probe
+data:
+  a: "kept"
+  b: "removed-in-git"

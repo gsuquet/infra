@@ -1,0 +1,60 @@
+# Argo CD for the experiment: the settings that matter for adoption, and
+# small resources so that the cluster fits next to other kind clusters.
+---
+fullnameOverride: argocd
+namespaceOverride: argocd
+
+crds:
+  annotations:
+    # A deleted CRD deletes all the Applications.
+    argocd.argoproj.io/sync-options: Prune=false
+
+global:
+  revisionHistoryLimit: 3
+
+configs:
+  cm:
+    # The Argo CD 3.x default, set to make it visible.
+    application.resourceTrackingMethod: annotation
+  params:
+    server.insecure: true
+    # The API server computes the diff, as it does for server-side apply.
+    controller.diff.server.side: true
+    # The value-bump phase changes this value (values/argocd-bump.yaml).
+    controller.status.processors: "20"
+  secret:
+    createSecret: true
+    annotations:
+      # argocd-server adds runtime keys to this Secret.
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+
+dex:
+  enabled: false
+
+notifications:
+  enabled: false
+
+controller:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+
+server:
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {memory: 192Mi}
+
+repoServer:
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {memory: 256Mi}
+
+applicationSet:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}
+
+redis:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}

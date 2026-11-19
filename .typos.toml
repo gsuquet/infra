@@ -2,3 +2,5 @@
 # (ANDed would split into AN + Ded, so extend-words never sees it).
 [default.extend-identifiers]
 ANDed = "ANDed"
+# A short commit SHA quoted in docs/research/experiments/argocd-adopt.md.
+e3ded2a2 = "e3ded2a2"

@@ -1,0 +1,7 @@
+# The value-bump phase: a change in argocd-cmd-params-cm changes the
+# checksum/cmd-params annotation of the pod templates, so all the Argo CD
+# workloads roll, the application controller included.
+---
+configs:
+  params:
+    controller.status.processors: "10"

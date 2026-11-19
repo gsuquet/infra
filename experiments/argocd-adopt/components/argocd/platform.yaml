@@ -1,0 +1,110 @@
+# Copied next to the rendered chart. The bootstrap applies the AppProject
+# and the argocd Application only; the argocd Application then creates the
+# other Applications (app of apps), in sync wave 1.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  description: Platform components (experiment argocd-adopt).
+  sourceRepos:
+    - git://git-server.git-server.svc.cluster.local/infra.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: platform
+  source:
+    repoURL: git://git-server.git-server.svc.cluster.local/infra.git
+    targetRevision: main
+    path: gitops/clusters/exp-argocd-adopt/rendered/argocd
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gateway-api-crds
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: platform
+  source:
+    repoURL: git://git-server.git-server.svc.cluster.local/infra.git
+    targetRevision: main
+    path: gitops/clusters/exp-argocd-adopt/rendered/gateway-api-crds
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cilium
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: platform
+  source:
+    repoURL: git://git-server.git-server.svc.cluster.local/infra.git
+    targetRevision: main
+    path: gitops/clusters/exp-argocd-adopt/rendered/cilium
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: probe
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: platform
+  source:
+    repoURL: git://git-server.git-server.svc.cluster.local/infra.git
+    targetRevision: main
+    path: gitops/clusters/exp-argocd-adopt/rendered/probe
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: probe
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

@@ -1,0 +1,74 @@
+# Experiment scaffolding, not a platform component: an in-cluster Git server
+# that stands in for GitHub. git daemon serves git:// with push enabled. The
+# Argo CD image already has git and git-daemon, so no other image is pulled.
+# The repository lives in an emptyDir: it dies with the pod.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: git-server
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: git-server
+  namespace: git-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: git-server
+  template:
+    metadata:
+      labels:
+        app: git-server
+    spec:
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        runAsNonRoot: true
+      containers:
+        - name: git-daemon
+          # v3.5.6, the multi-arch index digest.
+          # yamllint disable-line rule:line-length
+          image: quay.io/argoproj/argocd:v3.5.6@sha256:8e5cc5bb008df8a09dba439462e58c94c55b7735888d3ebde0c25fc05e4e5335
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              git init --quiet --bare -b main /srv/git/infra.git &&
+              touch /srv/git/infra.git/git-daemon-export-ok &&
+              exec git daemon --reuseaddr --base-path=/srv/git
+              --export-all --enable=receive-pack --informative-errors
+              /srv/git
+          ports:
+            - name: git
+              containerPort: 9418
+          readinessProbe:
+            tcpSocket:
+              port: git
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: repo
+              mountPath: /srv/git
+      volumes:
+        - name: repo
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: git-server
+  namespace: git-server
+spec:
+  selector:
+    app: git-server
+  ports:
+    - name: git
+      port: 9418
+      targetPort: git
