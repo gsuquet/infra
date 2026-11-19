@@ -51,7 +51,7 @@ Non-goals:
 - The secrets backend and where Talos machine secrets live after first creation (RFC 0020, [PR #4](https://github.com/gsuquet/infra/pull/4)).
 - The kind provisioning method (provider or `kind create cluster` from the mise task).
 - A plan-review CI job: plans stay local (ADR 0019).
-- Renaming "Terraform" in ADRs 0015, 0017, 0018 and 0019, where it names the language family (HCL, state, providers).
+- ADRs 0015, 0017, 0018 and 0019 keep "Terraform" as the name of the language family (HCL, state, providers); they are not edited.
 
 ## Decision drivers
 
@@ -103,10 +103,11 @@ Rewrite the IaC layer in Go or TypeScript on a DIY R2 backend or Pulumi Cloud.
 - Good: secret values encrypted per value in state; `passphrase` is the closest to a local key, `gcpkms` fits GKE later.
 - Bad: write-only values from bridged providers stay in state (encrypted as secrets) and are not diffed (secrets driver).
 - Bad: Talos sits on a community package that lags upstream and has no `talos_machine` / `talos_cluster` nor their `_wo` inputs; kind needs a generated local SDK whose version in `Pulumi.yaml` Renovate cannot update **(unverified)** (Talos driver).
+- Bad: every pre-commit hook replaced by language tooling (`gofmt`, `golangci-lint`, `tsc`, `eslint`) plus `pulumi preview`; trivy IaC scanning of Pulumi programs not supported **(unverified)**; `PULUMI_CONFIG_PASSPHRASE` comes from Pass like the R2 token (migration driver).
 - Bad: DIY backend not transactional and without drift detection; Pulumi Cloud Free (1 user, no resource cap, 25 ESC secrets, [pricing](https://www.pulumi.com/pricing/)) is a SaaS holding the state.
 - Bad: rewrite of 545 lines plus `pulumi import --from terraform` of every resource (`pulumi convert` covers 90-95% of most projects, [migration](https://www.pulumi.com/docs/iac/guides/migration/migrating-to-pulumi/from-terraform/)), all hooks and Renovate rules replaced, R2 bootstrap rewritten: days of work (migration driver).
 - Bad: ESC is a Pulumi Cloud service without Proton Pass integration ([ESC](https://www.pulumi.com/docs/esc/)), self-hosting not described **(unverified)**; it overlaps RFC 0020 and does not replace `pass-cli`.
-- Bad: with rendered manifests the IaC layer is about four resources per cluster plus three Helm installs, so a general-purpose language adds little; `pulumi preview --diff` is less common than plan output and Go/TS need a build step before an agent can check them (readability driver).
+- Bad: with rendered manifests the IaC layer is about four resources per cluster plus three Helm installs, so a general-purpose language adds little; `pulumi preview --diff` is less common than plan output and Go/TS need a build step before an agent can check them, while HCL keeps one declarative format next to the rendered YAML, readable without a language toolchain (readability driver).
 
 ### Do nothing
 
@@ -136,7 +137,10 @@ Secrets reach nodes without touching state; whatever still reaches an R2 state o
 
 | Topic | Choice | Reason |
 |---|---|---|
-| Version pin | Remove `required_version`; add top-level `language { compatible_with { opentofu = "~> 1.13.9" } }`, or an exact pin moved by a Renovate regex `customManagers` entry grouped with the mise `opentofu` update | OpenTofu ignores `required_version`; `"~> 1.13.9"` passes and `"~> 1.13.10"` fails on 1.13.9 (local test); an exact pin blocks the next patch until updated |
+| Version pin | Remove `required_version`; add top-level `language { compatible_with { opentofu = "~> 1.13.9" } }`; no Renovate regex manager | OpenTofu ignores `required_version`; `"~> 1.13.9"` passes and `"~> 1.13.10"` fails on 1.13.9 (local test); the range takes patch releases from mise without a code change, an exact pin would block each one; a minor upgrade edits the range by hand |
+| `terraform_providers_lock` | Runs tofu through the `--tf-path` / `PCT_TFPATH` override; if the override fails in the switch PR, drop the hook and regenerate lock files with `tofu providers lock` | Run as is, it rewrites lock files back to `registry.terraform.io` |
+| `tfupdate` | Dropped | It only rewrites `required_version`, which OpenTofu ignores; Renovate already updates providers |
+| Encryption check | The switch PR adds a pre-commit check that fails any root with an R2 `backend "s3"` block and without `enforced = true` on `state` and `plan`; kind roots excluded | Gives the Confirmation an owner |
 | Key provider | `pbkdf2`, in code: `encryption` block, sensitive passphrase variable fed by `pass-cli run`, `enforced = true` on `state` and `plan`; no `TF_ENCRYPTION` | Config in code is checkable; the secrets backend (RFC 0020) and `landing-zone/gcp` do not exist yet |
 | Passphrases | One per environment: production roots, everything else; an offline copy kept apart from Pass, checked by decrypting a downloaded state once | Docs advise one key per state for KMS and OpenBao providers only; each extra passphrase is one more item to lose |
 | kind roots | No encryption | Local, disposable state; `cluster:up` on kind must work offline and without secrets (ADR 0018) |
@@ -154,6 +158,9 @@ What stays in state with the ephemeral / `_wo` pattern:
 | `clusters/<talos>` | R2 | Hashes and IDs (Talos study option B, [PR #9](https://github.com/gsuquet/infra/pull/9)), plus any key the root generates, such as the service account signing key of RFC 0020 option G | Cluster CA, etcd CA, bootstrap tokens, admin kubeconfig, talosconfig |
 | `clusters/<gke>` | R2 | Cluster CA (public); Google access token if read with the `google_client_config` data source, short-lived (about one hour) **(unverified: whether an ephemeral variant exists)** | Same |
 | Helm releases (Cilium, Argo CD) | With the cluster | Release values, no secret planned | Same |
+
+Encryption matters when the pattern is not used (Talos options A/C), when a root generates a key (RFC 0020 option
+G), or when a provider lacks a write-only variant.
 
 Talos 0.12.0 ephemeral resources: `machine_secrets`, `machine_configuration`, `client_configuration`,
 `cluster_kubeconfig`, `cluster_health` ([index](https://registry.terraform.io/v2/provider-docs?filter[provider-version]=109978&page[size]=100),
@@ -187,15 +194,22 @@ agent path, not the Cloudflare-side one). Then a person runs `plan` on those roo
 
 Local tests on a scratch copy of `landing-zone/cloudflare` without credentials, repo pins (tflint 0.66.0, trivy
 0.76.1, tfupdate 0.10.3), OpenTofu 1.13.9, `encryption` block (`pbkdf2`, `enforced = true`) and `language` block in
-`.tf`: `tofu init -backend=false` and `validate` pass; tflint finds no error on either block; `trivy config
---exit-code 1` finds 0 misconfigurations; `tfupdate opentofu -v` rewrites `required_version` only.
+`.tf`:
+
+| Check | Result |
+|---|---|
+| `tofu init -backend=false`, `tofu validate` | Pass |
+| tflint | No error on either block |
+| `trivy config --exit-code 1` | 0 misconfigurations |
+| `tfupdate opentofu -v` | Rewrites `required_version` only |
 
 | Tool | Change |
 |---|---|
-| pre-commit-terraform | Point at tofu with `--tf-path` / `PCT_TFPATH` **(unverified)**, or drop `terraform_providers_lock`, which otherwise rewrites lock files back to `registry.terraform.io` |
+| pre-commit-terraform | Point at tofu with `--tf-path` / `PCT_TFPATH` **(unverified)**; if that fails, drop `terraform_providers_lock`, which otherwise rewrites lock files back to `registry.terraform.io` |
 | tflint, trivy | Unchanged (tested) |
 | terraform-docs | Works on HCL **(unverified)** |
-| tfupdate | Drop the hook or limit it to providers: it targets `required_version`, which OpenTofu ignores |
+| tfupdate | Dropped: it targets `required_version`, which OpenTofu ignores; Renovate updates providers |
+| Encryption check | New pre-commit check: fails a root with an R2 `backend "s3"` block and without `enforced = true` on `state` and `plan`; kind roots excluded |
 | Renovate | `terraform` manager reads `*.tf` and `*.tofu`; `registryUrls: ["https://registry.opentofu.org"]` in a `packageRule` ([manager](https://docs.renovatebot.com/modules/manager/terraform/)); the `language` block is not managed **(unverified: not documented)**; lock file maintenance is done by Renovate itself, whether it writes `registry.opentofu.org` addresses is **(unverified)** |
 | mise, CI | `terraform` replaced by `opentofu`; CI takes tools from mise |
 | `pass-cli run` | Unchanged; the passphrase variable comes from Pass like the R2 token |
@@ -214,13 +228,17 @@ flowchart TD
   enforce --> roots["Write cluster roots in OpenTofu"]
 ```
 
-Every switch PR change lands together, or lock files flip between registries. Files: `.mise/config.toml`,
-`.mise/mise.lock`, `.mise/tasks/tf` and the `cluster:*` tasks, `.pre-commit-config.yaml`
-(`terraform_providers_lock`, `tfupdate`), `.github/renovate.json` ("terraform cli" group renamed to match
-`opentofu` / `opentofu/opentofu` plus the `compatible_with` regex manager, "terraform providers" group, one lock
-file maintenance run checked), `landing-zone/cloudflare/terraform.tf`, `modules/cloudflare-domain/terraform.tf` and
-both `.terraform.lock.hcl` files, regenerated with `tofu init` / `tofu providers lock` and their diff reviewed
-(address, header, `h1:` hashes). Effort: about an hour, **an estimate only** until the gate passes.
+Every switch PR change lands together, or lock files flip between registries. Effort: about an hour, **an
+estimate only** until the gate passes.
+
+| File | Change |
+|---|---|
+| `.mise/config.toml`, `.mise/mise.lock` | `terraform` replaced by `opentofu` |
+| `.mise/tasks/tf`, `cluster:*` tasks | Call `tofu` |
+| `.pre-commit-config.yaml` | `terraform_providers_lock` runs tofu (or is dropped), `tfupdate` dropped, encryption check added |
+| `.github/renovate.json` | "terraform cli" group renamed to match `opentofu` / `opentofu/opentofu`; "terraform providers" group with `registryUrls` for registry.opentofu.org; one lock file maintenance run checked |
+| `landing-zone/cloudflare/terraform.tf`, `modules/cloudflare-domain/terraform.tf` | `required_version` replaced by the `language` block |
+| Both `.terraform.lock.hcl` | Regenerated with `tofu init` / `tofu providers lock`; diff reviewed (address, header, `h1:` hashes) |
 
 ## Operational impact
 
@@ -230,7 +248,7 @@ both `.terraform.lock.hcl` files, regenerated with `tofu init` / `tofu providers
 - Migration: R2 state of `landing-zone/cloudflare` read by OpenTofu without changes, then encrypted in place; both lock files rewritten to `registry.opentofu.org`; no compatibility window, the switch is atomic.
 - Security: the passphrase joins the Pass session of the R2 token; encryption stops a leaked R2 token, Cloudflare-side access and stray plan files, not holders of that session nor agents running as the owner's OS user.
 - Cost: N/A: OpenTofu and `pbkdf2` are free; a later `gcp_kms` key is a separate decision.
-- Observability: the read-only plan shows no changes; a check in pre-commit fails an R2-backed root without `enforced = true`; a downloaded R2 state object holds no known secret string and no plaintext `resources` values. No SLO is touched.
+- Observability: the read-only plan shows no changes; the pre-commit check added by the switch PR fails an R2-backed root without `enforced = true`; a downloaded R2 state object holds no known secret string and no plaintext `resources` values. No SLO is touched.
 
 ## Drawbacks and risks
 
@@ -238,7 +256,7 @@ both `.terraform.lock.hcl` files, regenerated with `tofu init` / `tofu providers
 - Encryption does not stop agents or anyone with the Pass session -> the ephemeral / `_wo` pattern stays the primary control; a key agents cannot reach is future work.
 - `tofu plan` against state written by Terraform 1.17.2 is untested -> the read-only plan gates the switch PR.
 - Terraform-only features will not arrive in OpenTofu; version numbers are independent (1.13 is not four releases behind 1.17) -> compare features, not numbers; revisit trigger in the Decision.
-- The `compatible_with` pin is not managed by Renovate or tfupdate out of the box -> range pin or a Renovate regex manager.
+- The `compatible_with` pin is not managed by Renovate or tfupdate out of the box -> range pin `~> 1.13.9` takes patches; a minor upgrade edits it by hand.
 - pre-commit-terraform tofu override, Renovate lock file maintenance against registry.opentofu.org and terraform-docs are unverified -> checked in the switch PR before merge.
 - Provider docs and examples target Terraform; third-party modules may carry Terraform-only `required_version` constraints that OpenTofu ignores, so they neither block nor protect -> pin modules and review their constraints.
 - `pbkdf2` salt randomness per file is not documented **(unverified)** -> move to `gcp_kms` or OpenBao when available.
@@ -252,14 +270,14 @@ None.
 - Status: accepted on 2026-11-19 by gsuquet
 - Decision: In the context of the IaC layer of `infra` (landing zones, bootstrap modules, cluster roots for kind, Talos and GKE), facing Talos secrets that need ephemeral resources and write-only inputs and R2 state with only server-side encryption, we decided for OpenTofu 1.13 with client-side state and plan encryption and against staying on Terraform 1.17 and against Pulumi, to achieve an unambiguous open-source license, the Talos ephemeral pattern and encrypted R2 state and plans, accepting a tooling migration and the loss of Terraform-only features.
 - Rules:
-  - Switch in one PR: mise `opentofu`, tasks call `tofu`, `required_version` replaced by top-level `language { compatible_with { opentofu = "~> 1.13.9" } }` (or exact pin plus Renovate regex manager), both `.terraform.lock.hcl` regenerated for `registry.opentofu.org`, `terraform_providers_lock` runs tofu or is dropped, `tfupdate` dropped or limited to providers, Renovate `registryUrls` for registry.opentofu.org.
+  - Switch in one PR: mise `opentofu`, tasks call `tofu`, `required_version` replaced by top-level `language { compatible_with { opentofu = "~> 1.13.9" } }` (range, no Renovate regex manager), both `.terraform.lock.hcl` regenerated for `registry.opentofu.org`, `terraform_providers_lock` runs tofu via `--tf-path` / `PCT_TFPATH` (if that fails, drop the hook), `tfupdate` dropped, Renovate `registryUrls` for registry.opentofu.org.
+  - The switch PR adds a pre-commit check that fails any root with an R2 `backend "s3"` block and without `enforced = true` on `state` and `plan`; kind roots excluded.
   - Merge the switch only after a read-only `tofu plan` on `landing-zone/cloudflare` shows no changes.
   - Every R2-backed root: `encryption` block in code, `pbkdf2` key provider, sensitive passphrase variable from `pass-cli run`, `enforced = true` on `state` and `plan`; no `TF_ENCRYPTION`. Migrate with an `unencrypted` fallback, apply once, then remove it.
   - One passphrase per environment (production, rest), with an offline backup.
   - kind roots: local state, not encrypted.
   - `.tf` files only, no `.tofu`.
   - Talos roots use ephemeral resources and write-only inputs; encryption is defense in depth, not the primary control.
-  - ADRs 0015, 0017, 0018, 0019 say "Terraform" for the language family; the switch PR updates their wording.
 - Consequences:
   - Good: a secret still reaching state or a saved plan is encrypted before R2; a leaked R2 token, Cloudflare-side access or a stray plan file reads nothing.
   - Good: the license question is closed.
@@ -268,7 +286,7 @@ None.
   - Bad: encryption does not stop agents or anyone holding the owner's Pass session.
   - Bad: Terraform-only features will not be available; tooling (pin, lock files, hooks, Renovate) changes once.
 - Confidence: medium, a moderate preference: with the full Talos ephemeral pattern R2 states hold almost no long-lived secret, and pre-commit-terraform, Renovate and terraform-docs behavior with tofu is unverified.
-- Confirmation: read-only `tofu plan` with no changes before the first encrypted apply; a pre-commit check (Conftest on HCL or a script) fails an R2-backed root without `enforced = true` on `state` and `plan`; a downloaded R2 state object holds no known secret string and no plaintext `resources` values.
+- Confirmation: read-only `tofu plan` with no changes before the first encrypted apply; the pre-commit check added by the switch PR fails an R2-backed root without `enforced = true` on `state` and `plan`; a downloaded R2 state object holds no known secret string and no plaintext `resources` values.
 - Revisit when: OpenTofu stops tracking provider protocol changes, Terraform adds client-side state encryption, or the secrets backend and `landing-zone/gcp` exist (move the key provider to `gcp_kms` or `openbao` with an identity agents do not hold).
 
 ## Implementation
@@ -296,6 +314,7 @@ N/A: the switch PR is not opened yet.
 | Key provider `gcp_kms` with an identity agents do not hold, or `openbao` | `landing-zone/gcp`, RFC 0020 |
 | kind provisioning: provider or `kind create cluster` from the mise task (keeps the kubeconfig out of state, cluster not in a plan) | cluster-kind module task |
 | Plan-review CI job reading encrypted plans | A change to ADR 0019 |
+| Rename "Terraform" to OpenTofu in ADRs 0015, 0017, 0018 and 0019, if wanted | Retro RFCs 0015-0019 superseded |
 
 kind provider options; the choice does not depend on the IaC tool, every one is on both registries:
 
