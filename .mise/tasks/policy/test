@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Run the unit tests of the Conftest policies (policy/**/*_test.rego)"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+
+# shellcheck source=SCRIPTDIR/../_lib/gitops.sh
+source .mise/tasks/_lib/gitops.sh
+
+require conftest
+
+# Formatting first: opa fmt style, so diffs stay small. Fix with: conftest fmt policy
+conftest fmt --check policy || {
+  log_error "Rego files are not formatted. Run 'mise x -- conftest fmt policy'."
+  exit 1
+}
+conftest verify --policy policy --data policy/data --show-builtin-errors

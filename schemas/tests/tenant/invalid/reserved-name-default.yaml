@@ -1,0 +1,22 @@
+---
+apiVersion: infra.gsuquet.com/v1alpha1
+kind: Tenant
+name: default
+description: Example tenant.
+namespaces:
+  - default
+quota:
+  requests:
+    cpu: "2"
+    memory: 4Gi
+  limits:
+    cpu: "4"
+    memory: 8Gi
+  pods: 20
+limits:
+  defaultRequest:
+    cpu: 100m
+    memory: 128Mi
+  default:
+    cpu: 500m
+    memory: 512Mi

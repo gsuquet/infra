@@ -1,0 +1,10 @@
+# Same kind and name as configmap.yaml of the umbrella chart, in another
+# namespace, like the Roles some charts put in kube-system. The render names
+# it configmap-kube-system-hello.yaml, so the two do not collide.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: kube-system
+data:
+  owner: {{ .Release.Name | quote }}

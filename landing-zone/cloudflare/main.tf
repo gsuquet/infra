@@ -10,7 +10,7 @@ resource "cloudflare_r2_bucket" "state" {
 }
 
 module "domain" {
-  source   = "./modules/domain"
+  source   = "../../modules/cloudflare-domain"
   for_each = var.domains
 
   account_id    = var.account_id

@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+#MISE description="Validate the rendered manifests of each cluster with kubeconform, custom resources included"
+#MISE dir="{{config_root}}"
+# Each cluster validates against, first match wins:
+#   - the Kubernetes schemas of its kubernetesVersion (cluster.yaml), from
+#     KUBERNETES_SCHEMA_LOCATION (default: kubeconform's built-in location,
+#     the master branch of yannh/kubernetes-json-schema),
+#   - JSON schemas built from the CRDs in its own rendered/ folder,
+#   - committed JSON schemas in schemas/crds/<group>/<kind>_<version>.json,
+#     for CRDs an operator installs at runtime instead of its chart (Cilium
+#     creates CiliumNetworkPolicy and CiliumClusterwideNetworkPolicy itself).
+# A resource without a schema fails. -strict rejects unknown fields.
+# CustomResourceDefinitions themselves are skipped: the Kubernetes schemas
+# kubeconform downloads (yannh/kubernetes-json-schema) have none. Their
+# openAPIV3Schema is still compiled below for the custom resources.
+set -euo pipefail
+
+# shellcheck source=SCRIPTDIR/../_lib/gitops.sh
+source .mise/tasks/_lib/gitops.sh
+
+require kubeconform yq
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+# OpenAPI v3 (CRD) to JSON schema, like kubeconform's openapi2jsonschema.py in
+# strict mode: nullable becomes a "null" type, and an object that lists its
+# properties denies the others unless it preserves unknown fields.
+# shellcheck disable=SC2016 # yq expression, not shell.
+crd_to_jsonschema='
+  (.. | select(tag == "!!map" and .nullable == true and has("type"))) |= (.type = [.type, "null"] | del(.nullable)) |
+  (.. | select(tag == "!!map" and has("properties") and (has("additionalProperties") | not) and .["x-kubernetes-preserve-unknown-fields"] != true)) |= .additionalProperties = false
+'
+
+# crd_schemas <rendered dir> <schema dir>: one file per CRD version, at the
+# path the kubeconform -schema-location template below expects.
+crd_schemas() {
+  local rendered="$1" schemas="$2" crd group kind version
+  while IFS= read -r crd; do
+    [ -n "$crd" ] || continue
+    group="$(yq '.spec.group' "$crd")"
+    kind="$(yq '.spec.names.kind | downcase' "$crd")"
+    while IFS= read -r version; do
+      mkdir -p "$schemas/$group"
+      VERSION="$version" yq -o=json \
+        ".spec.versions[] | select(.name == strenv(VERSION)) | .schema.openAPIV3Schema | $crd_to_jsonschema" \
+        "$crd" > "$schemas/$group/${kind}_${version}.json"
+    done < <(yq '.spec.versions[].name' "$crd")
+  done < <(grep -rlE '^kind: CustomResourceDefinition$' "$rendered" | LC_ALL=C sort)
+}
+
+# TODO(owner): pin to a commit of yannh/kubernetes-json-schema, e.g.
+# https://raw.githubusercontent.com/yannh/kubernetes-json-schema/<sha>/{{.NormalizedKubernetesVersion}}-standalone{{.StrictSuffix}}/{{.ResourceKind}}{{.KindSuffix}}.json
+# "default" follows the master branch at run time.
+schema_location="${KUBERNETES_SCHEMA_LOCATION:-default}"
+
+failures=0
+clusters=0
+while IFS= read -r -u 3 root; do
+  while IFS= read -r -u 4 cluster_file; do
+    cluster_dir="$(dirname "$cluster_file")"
+    rendered="$cluster_dir/rendered"
+    if [ ! -d "$rendered" ]; then
+      log_warn "$cluster_dir: nothing rendered (run 'mise run manifests:render')"
+      continue
+    fi
+    clusters=$((clusters + 1))
+    schemas="$work/$(printf '%s' "$cluster_dir" | cksum | cut -d' ' -f1)"
+    mkdir -p "$schemas"
+    crd_schemas "$rendered" "$schemas"
+
+    log_info "Validating $rendered"
+    # {{ }} are kubeconform template variables, not shell.
+    if ! kubeconform -strict -summary -skip CustomResourceDefinition \
+      -kubernetes-version "$(yq '.kubernetesVersion' "$cluster_file")" \
+      -schema-location "$schema_location" \
+      -schema-location "$schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
+      -schema-location "schemas/crds/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
+      "$rendered"; then
+      failures=$((failures + 1))
+    fi
+  done 4< <(cluster_files "$root")
+done 3< <(gitops_roots)
+
+if [ "$failures" -gt 0 ]; then
+  log_error "$failures of $clusters cluster(s) have invalid manifests"
+  exit 1
+fi
+log_info "$clusters cluster(s) valid"

@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=../../../../schemas/cluster.schema.json
+---
+# Test fixture: proves that manifests:render, manifests:check,
+# manifests:validate and policy:check work end to end.
+apiVersion: infra.gsuquet.com/v1alpha1
+kind: Cluster
+name: kind-fixture
+target: kind
+kubernetesVersion: 1.35.0
+# Renders the Greeting the chart gates on .Capabilities.APIVersions.
+apiVersions:
+  - example.com/v1alpha1/Greeting
+components:
+  - name: hello
+    values:
+      hello:
+        replicas: 2
+tenants:
+  - team-a
