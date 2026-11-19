@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+#MISE description="Lint the GitHub Actions workflows (actionlint, zizmor)"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+
+# shellcheck source=SCRIPTDIR/../_lib/gitops.sh
+source .mise/tasks/_lib/gitops.sh
+
+require actionlint zizmor
+
+actionlint
+# --offline: no GitHub API calls, so no token is needed.
+zizmor --offline .github/workflows

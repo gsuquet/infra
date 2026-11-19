@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+#MISE description="Render the enabled components of each cluster to <root>/clusters/<cluster>/rendered/<component>/"
+#MISE dir="{{config_root}}"
+# For each cluster.yaml and each component it enables, helm template renders
+# <root>/components/<component>/sources/ with, in this order (last wins):
+#   1. sources/values.yaml, the defaults of the component,
+#   2. components[].values of cluster.yaml, the overrides of the cluster,
+#   3. gitops.cluster and gitops.tenants, injected last so no override can fake them.
+# The output is one file per resource, <kind>-<name>.yaml, or
+# <kind>-<namespace>-<name>.yaml for a resource outside the catalog namespace.
+# Each CRD gets the sync wave -1. rendered/ is deleted first, so a removed
+# component disappears.
+set -euo pipefail
+
+# shellcheck source=SCRIPTDIR/../_lib/gitops.sh
+source .mise/tasks/_lib/gitops.sh
+
+require helm yq
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+# `helm dependency build` only fetches from repositories known to Helm. A
+# throwaway repository file keeps the render independent of (and away from)
+# the user's `helm repo` list.
+export HELM_REPOSITORY_CONFIG="$work/repositories.yaml"
+
+# Charts whose dependencies are built in this run, one per line (bash 3.2 on
+# macOS has no associative arrays).
+built_charts=""
+errors=0
+rendered=0
+
+# build_dependencies <chart dir>: fetch the dependencies pinned in Chart.lock.
+# `dependency build` (not update) never re-resolves versions: the render only
+# changes when Chart.lock changes.
+build_dependencies() {
+  local chart="$1"
+  grep -qxF -- "$chart" <<< "$built_charts" && return 0
+  if [ "$(yq '.dependencies // [] | length' "$chart/Chart.yaml")" -gt 0 ]; then
+    if [ ! -f "$chart/Chart.lock" ]; then
+      log_error "$chart: Chart.yaml has dependencies but no Chart.lock. Run 'helm dependency update $chart' and commit Chart.lock."
+      return 1
+    fi
+    # HTTP(S) repositories need a name: hash the URL so two charts that use
+    # the same repository share it. oci:// and file:// need no repository.
+    local url
+    while IFS= read -r url; do
+      [ -n "$url" ] || continue
+      helm repo add --force-update "repo-$(printf '%s' "$url" | cksum | cut -d' ' -f1)" "$url" > "$work/helm-repo.log" 2>&1 || {
+        cat "$work/helm-repo.log" >&2
+        log_error "$chart: helm repo add $url failed"
+        return 1
+      }
+    done < <(yq '.dependencies[].repository | select(test("^https?://"))' "$chart/Chart.yaml")
+    helm dependency build --skip-refresh "$chart" > "$work/helm-dependency.log" 2>&1 || {
+      cat "$work/helm-dependency.log" >&2
+      log_error "$chart: helm dependency build failed"
+      return 1
+    }
+  fi
+  built_charts+="$chart"$'\n'
+}
+
+# split_resources <helm output> <output dir> <release namespace>: one file per
+# resource.
+split_resources() {
+  local manifest="$1" out="$2" documents duplicates files
+  local -x NAMESPACE="$3"
+  # The file name: kind and name in lower case, so it is stable when the chart
+  # moves a resource to another template. A resource in another namespace than
+  # the release one (a Role in kube-system...) gets its namespace too, so the
+  # same kind and name in two namespaces do not collide.
+  local name_expression='(.kind | downcase) + "-" + (if (.metadata.namespace // "") != "" and .metadata.namespace != strenv(NAMESPACE) then (.metadata.namespace | downcase) + "-" else "" end) + (.metadata.name | downcase | sub("[^a-z0-9.-]", "-")) + ".yaml"'
+  # CRDs first (wave -1), so Argo CD creates them before the custom resources
+  # of the same component. Overrides any wave the chart sets, with a warning.
+  local crd_wave='with(select(.kind == "CustomResourceDefinition"); .metadata.annotations["argocd.argoproj.io/sync-wave"] = "-1")'
+  local overridden
+
+  documents="$(yq ea '[select(. != null)] | length' "$manifest")"
+  duplicates="$(yq ea "[select(. != null) | $name_expression] | group_by(.) | map(select(length > 1) | .[0]) | .[]" "$manifest")"
+  if [ -n "$duplicates" ]; then
+    log_error "$out: several resources would be written to: ${duplicates//$'\n'/, }"
+    return 1
+  fi
+  overridden="$(yq ea 'select(.kind == "CustomResourceDefinition" and .metadata.annotations["argocd.argoproj.io/sync-wave"] != null and (.metadata.annotations["argocd.argoproj.io/sync-wave"] | tostring) != "-1") | .metadata.name' "$manifest")"
+  [ -z "$overridden" ] || log_warn "$out: sync wave of these CRDs forced to -1: ${overridden//$'\n'/, }"
+
+  mkdir -p "$out"
+  # yq -s writes relative to the working directory.
+  (cd "$out" && yq "select(. != null) | $crd_wave" -s "$name_expression" "$manifest")
+
+  files="$(find "$out" -maxdepth 1 -type f -name '*.yaml' | wc -l | tr -d ' ')"
+  if [ "$files" -ne "$documents" ]; then
+    log_error "$out: $documents resources but $files files"
+    return 1
+  fi
+}
+
+# render_component <root> <cluster dir> <cluster.yaml> <gitops values> <component>
+render_component() {
+  local root="$1" cluster_dir="$2" cluster_file="$3" gitops_values="$4" component="$5"
+  local catalog="$root/components/$component"
+  local chart="$catalog/sources"
+  local out="$cluster_dir/rendered/$component"
+  local namespace kube_version overrides manifest api_versions
+
+  if [ ! -f "$catalog/component.yaml" ] || [ ! -f "$chart/Chart.yaml" ]; then
+    log_error "$cluster_file: component '$component' needs $catalog/component.yaml and $chart/Chart.yaml"
+    return 1
+  fi
+  namespace="$(yq '.namespace' "$catalog/component.yaml")"
+  kube_version="$(yq '.kubernetesVersion' "$cluster_file")"
+  # Optional apiVersions of cluster.yaml, comma separated for --api-versions.
+  api_versions="$(yq '.apiVersions // [] | join(",")' "$cluster_file")"
+
+  build_dependencies "$chart" || return 1
+
+  overrides="$work/overrides.yaml"
+  manifest="$work/manifest.yaml"
+  COMPONENT="$component" yq '.components[] | select(.name == strenv(COMPONENT)) | .values // {}' "$cluster_file" > "$overrides"
+
+  # --kube-version pins .Capabilities.KubeVersion: the output must not depend
+  # on the Helm version's default. --api-versions adds the cluster's
+  # apiVersions to .Capabilities.APIVersions, so templates gated on a CRD
+  # (ServiceMonitor, HTTPRoute...) render. --include-crds renders crds/
+  # folders too. --skip-tests leaves out `helm test` hooks: Argo CD would
+  # apply them as plain Pods.
+  if ! helm template "$component" "$chart" \
+    --namespace "$namespace" \
+    --kube-version "$kube_version" \
+    ${api_versions:+--api-versions "$api_versions"} \
+    --include-crds \
+    --skip-tests \
+    --values "$overrides" \
+    --values "$gitops_values" > "$manifest"; then
+    log_error "$cluster_file: helm template failed for '$component'"
+    return 1
+  fi
+  # A file in crds/ that starts with --- would leave an empty document after
+  # its "# Source:" comment, and the comment would land in a file of its own.
+  awk 'prev ~ /^# Source: / && $0 ~ /^---[[:space:]]*$/ { prev = $0; next } { print; prev = $0 }' \
+    "$manifest" > "$manifest.clean"
+  split_resources "$manifest.clean" "$out" "$namespace"
+}
+
+# gitops_values <root> <cluster.yaml> <output file>: the values every component
+# of the cluster gets under the gitops key.
+gitops_values() {
+  local root="$1" cluster_file="$2" output="$3" component tenant tenant_file
+  CLUSTER="$cluster_file" yq -n '.gitops.cluster = (load(strenv(CLUSTER)) | {"name": .name, "target": .target, "kubernetesVersion": .kubernetesVersion, "components": []}) | .gitops.tenants = {}' > "$output"
+  # Components with their namespace from the catalog, for the argocd
+  # component to make one Application per component.
+  while IFS= read -r component; do
+    [ -n "$component" ] || continue
+    COMPONENT="$component" CATALOG="$root/components/$component/component.yaml" \
+      yq -i '.gitops.cluster.components += [{"name": strenv(COMPONENT), "namespace": (load(strenv(CATALOG)) | .namespace)}]' "$output"
+  done < <(yq '.components[].name' "$cluster_file")
+  # Tenants keyed by name, with the content of gitops/tenants/<tenant>.yaml.
+  while IFS= read -r tenant; do
+    [ -n "$tenant" ] || continue
+    tenant_file="$root/tenants/$tenant.yaml"
+    if [ ! -f "$tenant_file" ]; then
+      log_error "$cluster_file: tenant '$tenant' has no $tenant_file"
+      return 1
+    fi
+    TENANT="$tenant" TENANT_FILE="$tenant_file" \
+      yq -i '.gitops.tenants[strenv(TENANT)] = (load(strenv(TENANT_FILE)) | del(.apiVersion) | del(.kind))' "$output"
+  done < <(yq '.tenants[]' "$cluster_file")
+}
+
+# File descriptors 3 and 4: no command in the loops can read their input.
+while IFS= read -r -u 3 root; do
+  while IFS= read -r -u 4 cluster_file; do
+    cluster_dir="$(dirname "$cluster_file")"
+    log_info "Rendering cluster $cluster_dir"
+    rm -rf "$cluster_dir/rendered"
+
+    values="$work/gitops.yaml"
+    for component in $(yq '.components[].name' "$cluster_file"); do
+      if [ ! -f "$root/components/$component/component.yaml" ]; then
+        log_error "$cluster_file: component '$component' is not in the catalog ($root/components/$component/component.yaml)"
+        errors=$((errors + 1))
+        continue 2
+      fi
+    done
+    if ! gitops_values "$root" "$cluster_file" "$values"; then
+      errors=$((errors + 1))
+      continue
+    fi
+
+    while IFS= read -r component; do
+      [ -n "$component" ] || continue
+      if render_component "$root" "$cluster_dir" "$cluster_file" "$values" "$component"; then
+        log_info "  rendered $component"
+        rendered=$((rendered + 1))
+      else
+        errors=$((errors + 1))
+      fi
+    done < <(yq '.components[].name' "$cluster_file")
+  done 4< <(cluster_files "$root")
+done 3< <(gitops_roots)
+
+if [ "$errors" -gt 0 ]; then
+  log_error "$errors error(s), $rendered component(s) rendered"
+  exit 1
+fi
+log_info "$rendered component(s) rendered"
