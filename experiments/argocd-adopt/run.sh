@@ -59,11 +59,13 @@ die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 PF_PID=
 AVAIL_PID=
+WATCH_PID=
 CREATED=false
 cleanup() {
   local rc=$?
   [[ -n $AVAIL_PID ]] && kill "$AVAIL_PID" 2>/dev/null || true
   [[ -n $PF_PID ]] && kill "$PF_PID" 2>/dev/null || true
+  [[ -n $WATCH_PID ]] && kill "$WATCH_PID" 2>/dev/null || true
   if [[ $CREATED == true ]]; then
     log "delete cluster $CLUSTER"
     kind delete cluster --name "$CLUSTER" || true
@@ -204,18 +206,43 @@ apps_table() {
   } | column -t
 }
 
-# Resources of the argocd Application seen OutOfSync, one file per revision:
-# says what made Argo CD sync itself on a commit.
-record_argocd_oos() { # revision
-  kubectl -n argocd get applications.argoproj.io argocd -o json 2>/dev/null \
-    | jq -r '.status.resources[]? | select(.status == "OutOfSync")
-      | "\(.kind)/\(.namespace // "")/\(.name)"' >>"$WORK/oos-${1:0:8}" || true
+# Resources of the argocd Application seen OutOfSync, per revision: says what
+# made Argo CD sync itself on a commit. A 5 s poll missed the OutOfSync state
+# (it lasts less than the poll period), so a watch records every update of the
+# Applications from the hand-over on, to $WORK/apps-watch.json.
+# Every operation of every Application, from the watch: the status and the
+# sync history do not show a partial self-heal sync at the same revision.
+show_operations() {
+  jq -sr '[.[] | select(.status.operationState.finishedAt != null)
+      | {app: .metadata.name, os: .status.operationState}]
+    | unique_by([.app, .os.finishedAt]) | sort_by(.os.finishedAt)[]
+    | "  \(.os.finishedAt) \(.app) rev \(.os.syncResult.revision[0:8]) \(.os.phase):" +
+      " \(.os.syncResult.resources // [] | map(select((.hookType // "") == "")) | length) resources," +
+      " \(.os.syncResult.resources // [] | map(select((.hookType // "") != "")) | length) hook resources" +
+      (if (.os.operation.sync.resources // []) | length > 0
+       then " (partial sync of Application \([.os.operation.sync.resources[] | select(.kind == "Application") | .name] | join(", ")))"
+       else "" end)' "$WORK/apps-watch.json" || true
+}
+
+start_apps_watch() {
+  kubectl -n argocd get applications.argoproj.io -w -o json \
+    >"$WORK/apps-watch.json" 2>"$WORK/apps-watch.err" &
+  WATCH_PID=$!
 }
 
 show_argocd_oos() { # revision
-  echo "argocd Application resources seen OutOfSync while waiting for ${1:0:8}:"
-  sort -u "$WORK/oos-${1:0:8}" 2>/dev/null | sed 's/^/  /'
+  local w=$WORK/apps-watch.json
+  echo "argocd Application resources seen OutOfSync at ${1:0:8} (watch):"
+  jq -r --arg rev "$1" 'select(.metadata.name == "argocd"
+      and .status.sync.revision == $rev)
+    | .status.resources[]? | select(.status == "OutOfSync")
+    | "  \(.kind)/\(.namespace // "")/\(.name)"' "$w" | sort -u || true
   echo "(end of list)"
+  echo "argocd Application updates at ${1:0:8} (sync status, operation phase):"
+  jq -r --arg rev "$1" 'select(.metadata.name == "argocd"
+      and .status.sync.revision == $rev)
+    | "\(.status.sync.status) \(.status.operationState.phase // "-")"' "$w" \
+    | uniq -c | sed 's/^/ /' || true
   kubectl -n argocd get applications.argoproj.io argocd -o json | jq -r '
     "argocd app last sync: rev \((.status.operationState.syncResult.revision // "-")[0:8])," +
     " \([(.status.operationState.syncResult.resources // [])[]
@@ -224,9 +251,7 @@ show_argocd_oos() { # revision
 
 wait_apps() { # revision timeout-seconds
   local rev=$1 deadline=$((SECONDS + $2)) ready
-  : >>"$WORK/oos-${rev:0:8}"
   while ((SECONDS < deadline)); do
-    record_argocd_oos "$rev"
     ready=$(kubectl -n argocd get applications.argoproj.io -o json 2>/dev/null | jq --arg rev "$rev" '
       [.items[] | select(.status.sync.status == "Synced"
         and .status.health.status == "Healthy"
@@ -430,6 +455,7 @@ echo "tracking annotation on ds/cilium before adoption:" \
   "$(kubectl -n kube-system get ds cilium -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/tracking-id}')"
 
 log "phase 4: hand over - apply the AppProject and the argocd Application"
+start_apps_watch
 kapply -f "$split_dir/3-argocd-resources.yaml" | sed 's/^/  /'
 wait_apps "$REV_V1" 600
 apps_table
@@ -492,7 +518,8 @@ for w in deploy/coredns ds/kube-proxy-absent ds/cilium; do
   kubectl -n kube-system annotate "$w" exp.invalid/control- >/dev/null
   echo "  $w: annotation added, generation $g1 -> $g2"
 done
-echo "what the first syncs did, per Application (kind: message):"
+# .status.operationState is the last operation only: see show_operations.
+echo "what the last sync did, per Application (kind: message):"
 kubectl -n argocd get applications.argoproj.io -o json | jq -r '.items[]
   | .metadata.name as $a | (.status.operationState.syncResult.resources // [])
   | map(select(.hookType == null)) | group_by(.kind)[]
@@ -528,7 +555,7 @@ kubectl -n argocd get applications.argoproj.io -o json | jq -r '.items[]
   | select(.status == "Pruned" or (.message // "" | test("prun|delete"; "i")))
   | "  \($a): \(.kind)/\(.name) \(.status) \(.message)"' || true
 echo "(end of list)"
-echo "hooks run by the first sync of the argocd Application:"
+echo "hooks run by the last sync of the argocd Application:"
 kubectl -n argocd get applications.argoproj.io argocd -o json | jq -r '
   (.status.operationState.syncResult.resources // [])[] | select(.hookType)
   | "  \(.hookType) \(.kind)/\(.name): \(.hookPhase // .status) \(.message // "")"'
@@ -560,6 +587,13 @@ show_argocd_oos "$REV"
 kubectl -n argocd get applications.argoproj.io argocd -o json | jq -r '
   "argocd app sync history: \(.status.history // [] | length) entries," +
   " last at \((.status.history // [] | last | .revision // "-")[0:8])"'
+# Phase 6 replaces the controller pod: keep its log now.
+kubectl -n argocd logs sts/argocd-application-controller >"$WORK/controller-phase5.log" 2>&1 || true
+echo "controller log, argocd Application, last refresh and auto-sync lines:"
+grep -E 'application=argocd( |$)' "$WORK/controller-phase5.log" \
+  | grep -E 'Initiated|Refreshing app status' | grep -v 'controller refresh requested' \
+  | sed -E 's/^time="([^"]+)".*msg="([^"]*)".*/\1 \2/' \
+  | cut -c1-160 | tail -6 | sed 's/^/  /' || true
 
 log "phase 5b: a CRD removed from git - pruned, orphaned or OutOfSync?"
 gateway_crds_in_app() {
@@ -659,6 +693,8 @@ kubectl apply --server-side --dry-run=server --field-manager=argocd-controller \
 
 log "result"
 apps_table
+echo "operations of all Applications (watch):"
+show_operations
 echo "sync history of the argocd Application:"
 kubectl -n argocd get applications.argoproj.io argocd -o json | jq -r '
   .status.history[] | "  #\(.id) rev \(.revision[0:8])" +
