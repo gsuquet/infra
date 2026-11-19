@@ -1,0 +1,22 @@
+# Cilium on kind with kube-proxy replacement. run.sh sets k8sServiceHost
+# to the control-plane container of the cluster.
+---
+kubeProxyReplacement: true
+k8sServicePort: 6443
+
+ipam:
+  mode: kubernetes
+
+operator:
+  replicas: 1
+
+# The gateway-api-crds component owns the Gateway API CRDs. The experiment
+# does not test a Gateway implementation.
+gatewayAPI:
+  enabled: false
+
+# Hubble off: with the chart default (hubble.tls.auto.method=helm), helm
+# template generates new TLS certificates on each render, so the rendered
+# manifests are not reproducible. run.sh shows this in its render check.
+hubble:
+  enabled: false
