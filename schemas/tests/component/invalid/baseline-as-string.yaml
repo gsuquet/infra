@@ -1,0 +1,9 @@
+---
+apiVersion: infra.gsuquet.com/v1alpha1
+kind: Component
+name: cilium
+description: Cilium CNI with kube-proxy replacement.
+namespace: kube-system
+baseline: "yes"
+targets:
+  - kind

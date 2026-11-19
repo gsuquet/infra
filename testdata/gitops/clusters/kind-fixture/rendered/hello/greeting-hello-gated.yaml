@@ -1,0 +1,10 @@
+---
+# Source: hello/charts/hello/templates/greeting-gated.yaml
+apiVersion: example.com/v1alpha1
+kind: Greeting
+metadata:
+  name: hello-gated
+  namespace: hello
+spec:
+  message: "Hello"
+  replicas: 1

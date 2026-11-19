@@ -1,0 +1,11 @@
+---
+# Source: hello/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hello
+  namespace: hello
+data:
+  cluster: "kind-fixture"
+  target: "kind"
+  tenants: "team-a"

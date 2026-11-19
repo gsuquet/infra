@@ -1,0 +1,60 @@
+{
+  "$id": "https://github.com/gsuquet/infra/schemas/component.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "gitops/components/<name>/component.yaml: one entry of the component catalog. The Helm source is the umbrella chart in sources/, with the default values in sources/values.yaml.",
+  "properties": {
+    "apiVersion": {
+      "const": "infra.gsuquet.com/v1alpha1",
+      "description": "Version of this schema."
+    },
+    "baseline": {
+      "description": "True if every cluster whose target is in targets must enable the component.",
+      "type": "boolean"
+    },
+    "description": {
+      "description": "What the component does, in one sentence.",
+      "minLength": 1,
+      "type": "string"
+    },
+    "kind": {
+      "const": "Component"
+    },
+    "name": {
+      "description": "Component name. Must be equal to the folder name. It is also the Helm release name.",
+      "maxLength": 53,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "type": "string"
+    },
+    "namespace": {
+      "description": "Namespace of the Helm release (helm template --namespace).",
+      "maxLength": 63,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "type": "string"
+    },
+    "targets": {
+      "description": "Cluster targets that support the component. schemas:check fails if a cluster with another target enables it.",
+      "items": {
+        "enum": [
+          "kind",
+          "talos",
+          "gke"
+        ]
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "name",
+    "description",
+    "namespace",
+    "baseline",
+    "targets"
+  ],
+  "title": "GitOps catalog component",
+  "type": "object"
+}

@@ -1,0 +1,6 @@
+dependencies:
+- name: hello
+  repository: file://../../../../charts/hello
+  version: 0.1.0
+digest: sha256:d762c531f2e30bd44c6bff07051ec4ba3acb8a9506feb3fc7742cb8db5fbf429
+generated: "2026-11-18T23:45:54.193963+01:00"
