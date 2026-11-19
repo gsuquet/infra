@@ -3,7 +3,7 @@
 Composition managing the foundation of the Cloudflare account:
 
 - the R2 bucket holding Terraform states;
-- one `domain` module instance per entry in `terraform.tfvars`: zone, baseline settings, DNSSEC, CAA, Proton Mail records;
+- one `domain` module instance ([`modules/cloudflare-domain`](../../modules/cloudflare-domain)) per entry in `terraform.tfvars`: zone, baseline settings, DNSSEC, CAA, Proton Mail records;
 - the Zero Trust foundation: organization, identity providers without a secret (one-time PIN, passkeys, Cloudflare account), Access groups, reusable policies (`<audience>-<tier>`), and the account-wide applications (catch-all per domain, WARP login, App Launcher).
 
 Application Workers, R2 buckets and Access applications belong to the tenant layer.

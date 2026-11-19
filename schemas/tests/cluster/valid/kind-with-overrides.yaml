@@ -1,0 +1,18 @@
+---
+apiVersion: infra.gsuquet.com/v1alpha1
+kind: Cluster
+name: kind-dev
+target: kind
+kubernetesVersion: 1.34.0
+apiVersions:
+  - monitoring.coreos.com/v1
+  - gateway.networking.k8s.io/v1/HTTPRoute
+  - v1
+components:
+  - name: argocd
+  - name: cilium
+    values:
+      cilium:
+        kubeProxyReplacement: true
+tenants:
+  - team-a

@@ -1,0 +1,11 @@
+---
+# Source: hello/templates/tenant-namespaces.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: team-a
+  labels:
+    network.infra.gsuquet.com/policy: default-deny
+    infra.gsuquet.com/tenant: team-a
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
