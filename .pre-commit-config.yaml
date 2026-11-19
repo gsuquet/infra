@@ -58,17 +58,30 @@ repos:
   - repo: https://github.com/antonbabenko/pre-commit-terraform
     rev: b9e409b0fee34ee0eee7e6f6a407061f15032926  # frozen: v1.109.5
     hooks:
+      # --tf-path=tofu: without it the hooks pick a terraform binary first when
+      # one is on PATH, and terraform_providers_lock would rewrite the lock
+      # files back to registry.terraform.io addresses.
       - id: terraform_fmt
+        args:
+          - --hook-config=--tf-path=tofu
       - id: terraform_providers_lock
-        # Lock files hash every platform that runs Terraform: macOS laptops,
+        # Lock files hash every platform that runs OpenTofu: macOS laptops,
         # CI runners and arm64 Linux. The hook only regenerates a lock file
         # when a platform is missing, so CI does not rewrite it.
         args:
+          - --hook-config=--tf-path=tofu
           - --hook-config=--mode=regenerate-lockfile-if-some-platform-missed
           - --args=-platform=darwin_arm64
           - --args=-platform=linux_amd64
           - --args=-platform=linux_arm64
       - id: terraform_tflint
+        # The hook runs tflint in each module folder, where it does not find
+        # the root .tflint.hcl on its own.
+        args:
+          - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
       - id: terraform_trivy
       - id: terraform_validate
-      - id: tfupdate
+        args:
+          - --hook-config=--tf-path=tofu
+      # No tfupdate: it rewrites required_version, which OpenTofu ignores.
+      # Renovate moves the language block pin and the provider versions.
