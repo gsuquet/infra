@@ -29,8 +29,9 @@ accepts that it knows "merged", not "deployed".
 - ADR-0008 chose Kargo with git-only steps (no `argocd-update`) and deferred where Kargo runs.
 - ADR-0009 onboards tenants from `gitops/tenants/<tenant>.yaml`; a tenant's clusters are the
   `cluster.yaml` files that list it. It defines no promotion order.
-- ADR-0004: one self-managed Argo CD per cluster, no hub. ADR-0016 and RFC 0020: kind runs with an
-  ESO `fake` store and no real credential.
+- ADR-0004: one self-managed Argo CD per cluster, no hub. ADR-0016: kind runs with no real
+  credential; its in-cluster provider (ESO `fake` or `kubernetes`) is open. RFC 0020 (in review)
+  proposes the `fake` store for kind; this RFC assumes it.
 - Problem: where Kargo runs, how it is installed and configured, and what a promotion does without
   `argocd-update`, before the first tenant is onboarded.
 - Study date 2026-11-18, against Kargo source tag `v1.12.6`. Marks: **V** verified against the
@@ -199,10 +200,14 @@ sequenceDiagram
     K->>K: oci-download, untar, delete tenant path, helm-template
     K->>G: git-commit, git-push to kargo/promotion/NAME
     K->>G: git-open-pr to main
-    loop every 30s, no timeout
-        K->>G: git-wait-for-pr
+    par Promotion Running
+        loop every 30s until merged or closed, no timeout
+            K->>G: git-wait-for-pr
+        end
+    and
+        H->>G: review and merge
     end
-    H->>G: review and merge
+    Note over K,H: the merge ends the poll
     K->>S: Promotion succeeded, Stage Healthy, Freight in use
     A->>G: poll or webhook
     A->>A: sync tenants/TENANT/CLUSTER
@@ -339,7 +344,7 @@ spec:
 | `helm-template` takes a local chart dir with `Chart.yaml`; `oci-download` accepts `oci://...:tag` with Helm credentials; `includeCRDs` defaults to `false` | `oci-download` + `untar` first; tenants ship no cluster-scoped resources anyway |
 | `kustomize-build` renders a dir with `kustomization.yaml` | Kustomize tenants need a `git` subscription with `includePaths` (open question 2) |
 | `git-merge-pr` exists (beta) | Never used: a human merges |
-| SSH repository URLs deprecated since `v1.10.0`, removal announced for `v1.13.0` (so `v2.0.0`) | HTTPS URLs only |
+| SSH repository URLs deprecated since `v1.10.0`, removal announced for `v1.13.0`; there is no `v1.13.0`, the next release is `v2.0.0` (roadmap) | HTTPS URLs only |
 | Enterprise-only steps: `wait-for-approval`, `send-message`, `gh-*`, `gha-*`, `tf-*`, ServiceNow, Jira | None needed |
 
 ### Without `argocd-update`
@@ -389,8 +394,8 @@ Why kind cannot write to `gsuquet/gitops`:
 
 | kind option | Trade-off |
 | --- | --- |
-| (a) Person-seeded real App key on one named kind cluster, `kargo` only in that cluster's `cluster.yaml` | Breaks ADR-0016 "kind runs with no credentials" and the RFC 0020 Conftest rule "no `fake` provider outside kind"; needs owner sign-off; still loses promotion order at every recreate. Not proposed |
-| (b) Offline sandbox: in-cluster Gitea, kind-only opt-in component; `git-open-pr` and `git-wait-for-pr` support `provider: gitea`, Gitea has no pull request labels yet (issue 6021) (**V**), so the kind task variant drops `labels`. Gitea chart, version and footprint (**U**) | Proposed |
+| (a) Person-seeded real App key on one named kind cluster, `kargo` only in that cluster's `cluster.yaml` | Breaks ADR-0016 "kind runs with no credentials" and the Conftest rule "no `fake` provider outside kind" proposed by RFC 0020 (in review); needs owner sign-off; still loses promotion order at every recreate. Not proposed |
+| (b) Offline sandbox: in-cluster Gitea, kind-only opt-in component, dummy App key from the `fake` store (needs RFC 0020 to choose `fake` for kind); `git-open-pr` and `git-wait-for-pr` support `provider: gitea`, Gitea has no pull request labels yet (issue 6021) (**V**), so the kind task variant drops `labels`. Gitea chart, version and footprint (**U**) | Proposed |
 
 With (b), `kind` is still a Stage of every tenant on the long-lived host: it writes
 `tenants/<tenant>/kind/`, and every kind cluster on every machine syncs it with its own Argo CD (no
@@ -406,11 +411,11 @@ credential: the repository is public). Promotion order lives on a host that is n
 
 | Item | Rule |
 | --- | --- |
-| Project | One per onboarded tenant, named `kargo-<tenant>` (naming is a proposal), on the Kargo host whatever cluster the tenant runs on |
+| Project | One per onboarded tenant, named `kargo-<tenant>` to stay clear of tenant workload namespaces on the same cluster (naming is a proposal), on the Kargo host whatever cluster the tenant runs on |
 | Pipeline ownership | The Kargo host render joins across every `gitops/clusters/*/cluster.yaml` (ADR-0009). For each tenant listed by at least one cluster it emits the Project namespace, `Project`, `ProjectConfig`, `Warehouse`, one `Stage` per cluster that lists it, plus the shared `ClusterPromotionTask`, into `gitops/clusters/<kargo-host>/rendered/`, applied under the platform AppProject, not the tenant one |
 | Project namespace | Rendered by `infra` with `kargo.akuity.io/project: "true"` (Kargo adopts it, **V**) and the policy label, so Conftest checks it. A namespace Kargo creates at runtime would lack the label |
 | Promotion order | New tenant file field, for example `promotion: [kind, pi, gke]` (extends ADR-0009, needs its own follow-up). Stage N takes Freight from N-1 (`sources.stages`), the first from the Warehouse (`sources.direct: true`). Render fails when the list differs from the clusters that list the tenant |
-| Roles | Built-in `kargo-admin`, `kargo-promoter` (promote, approve Freight), `kargo-viewer`, each a ServiceAccount, Role and RoleBinding; custom `promote` verb on `stages`. OIDC claims map with `rbac.kargo.akuity.io/claims`; system roles through `api.oidc.*` (**V**) |
+| Roles | Built-in `kargo-admin`, `kargo-promoter` (promote, approve Freight), `kargo-viewer`, each a ServiceAccount, Role and RoleBinding; custom `promote` verb on `stages`. OIDC claims map with `rbac.kargo.akuity.io/claims`; system roles `kargo-admin`, `kargo-viewer`, `kargo-user`, `kargo-project-creator` through `api.oidc.*` (**V**) |
 | Tenant access | `kargo-promoter` and `kargo-viewer` on its own Project, never `kargo-admin` (admin could repoint its Stage at another path). Future-proofing: the owner is the only user today |
 | Auto-promotion | `ProjectConfig.spec.promotionPolicies` (`stageSelector`, `autoPromotionEnabled`) (**V**). It only opens pull requests automatically. Default: on for `kind`, off for later clusters |
 | Soak | `requestedFreight[].sources.requiredSoakTime` (**V**): the only time gate between clusters without verification |
@@ -452,7 +457,9 @@ Rules from the lookup order:
 ### Pull request checks on `gsuquet/gitops`
 
 Tenant charts render inside the Kargo controller, outside `infra`'s `manifests:check`, kubeconform
-and Conftest. A required status check on `main` of `gsuquet/gitops` (proposal):
+and Conftest. Without a check, bad or malicious output is stopped only by the human review and, at
+sync time, by the tenant AppProject (ADR-0009). A required status check on `main` of
+`gsuquet/gitops` (proposal):
 
 | Check | Rule |
 | --- | --- |
@@ -499,11 +506,14 @@ Kargo host depends on resolving it first (GKE's own FQDN network policy feature:
 | CRDs | Templated in the chart (`templates/crds.yaml`), rendered by `helm template`, sync wave `-1` |
 
 Footprint is unmeasured: no sizing data in the docs, and `ghcr.io` images were outside the study's
-fetch scope. Estimate (**U**): about 0.5 GiB of memory requests, plus about 0.2 GiB for an Argo
+fetch scope. Estimate (**U**): five small Go processes at a few tens of MiB each when idle, about
+0.5 GiB of memory requests in total, plus about 0.2 GiB for an Argo
 Rollouts controller if adopted, next to Talos, Cilium, Argo CD, cert-manager and ESO on a Pi 4 with
 8 GiB; the controller spikes during Promotions (`git clone`, `helm template` in-process). Gate: in
 slice 1, record `kubectl top pod` (metrics-server on kind) for every Kargo pod, idle and during a
-realistic Promotion, in this RFC before fixing requests and limits and accepting a Pi as host.
+realistic Promotion, and record the peaks in the `kargo` component README
+(`gitops/components/kargo/README.md`, linked from Implementation) before fixing requests and limits
+and accepting a Pi as host. This RFC stays unchanged once accepted.
 
 ### Verification (not in slice 1)
 
@@ -527,7 +537,8 @@ realistic Promotion, in this RFC before fixing requests and limits and accepting
 - Every Kargo Project namespace is rendered by `infra` and carries the policy label.
 - `gsuquet/gitops` `main` requires the path-scope, kubeconform and Conftest check, a pull request
   with one approval, auto-merge disabled, the App in no bypass list, head branches auto-deleted.
-- Footprint gate recorded before requests, limits and a Pi host are fixed.
+- Footprint peaks recorded in `gitops/components/kargo/README.md` before requests, limits and a Pi
+  host are fixed.
 
 ## Operational impact
 
@@ -540,10 +551,13 @@ realistic Promotion, in this RFC before fixing requests and limits and accepting
   create the GitHub App and branch protection, required check on `gsuquet/gitops`; (3) enable
   `kargo` on the first long-lived cluster; (4) onboard tenants one by one. Gate between steps: the
   previous step's promotion merged and synced.
-- Rollback: disable `kargo` in the host `cluster.yaml` and re-render (minutes); close open
+- Rollback: disable `kargo` in the host `cluster.yaml` and re-render (minutes). Pruning the
+  component deletes its CRDs and every Stage, Freight and Promotion: after re-enabling, every
+  upstream Stage must be promoted again. Close open
   promotion pull requests and delete `kargo/promotion/*` branches; promote by hand with
   `mise run tenant:render` and `gh pr create`. Merged manifests stay in `gsuquet/gitops`.
-- Migration: None: Kargo state is custom resources on its host and rebuilds from Warehouses;
+- Migration: None: Kargo state is custom resources on its host. Warehouses rediscover Freight, but
+  Stage history and promotion order are lost and rebuilt only by promoting again;
   `gsuquet/gitops` layout and tenant files are unchanged except the new `promotion` field.
 - Security: new GitHub App with write access to `gsuquet/gitops`; credential in
   `kargo-shared-resources`; tenants never `kargo-admin` and never Secret write in Project
@@ -562,9 +576,12 @@ realistic Promotion, in this RFC before fixing requests and limits and accepting
   `web`-metric verification later.
 - Maturity: API `v1alpha1`; each minor breaks things (`v1.12.0` removed the gRPC API,
   `git-open-pr.createTargetBranch`, `git-commit.author`); `v2.0.0` is next and "replaces the
-  plumbing underneath Kargo -- how it stores state and how its components learn about changes",
-  upgrade details "coming soon" (**V**) -> follow the latest minor (open-source users get fixes only
-  there; backports are commercial) and revisit before `v2.0.0`.
+  plumbing underneath Kargo -- how it stores state and how its components learn about changes";
+  the roadmap says GitOps-managed resources and promotion processes keep working; upgrade details
+  "coming soon" (**V**); single-vendor project (Akuity, about 3.8k GitHub stars on 2026-11-18), minors every two
+  to three months (twelve from October 2024 to July 2026), patches for several minors at once
+  (**V**) -> follow the latest minor (open-source users get fixes only there; backports are
+  commercial) and revisit before `v2.0.0`.
 - Kargo state (Freight, history, promotion order) lives on one host -> host on a long-lived
   cluster, never kind; re-promote upstream Stages after a loss.
 - An open promotion pull request blocks later Promotions to that Stage -> merge or close quickly;
@@ -579,8 +596,8 @@ realistic Promotion, in this RFC before fixing requests and limits and accepting
 - GKE as host depends on Dataplane V2 FQDN policy support -> Pi host first, or resolve the risk.
 - Unverified facts above (anonymous `ghcr.io` pulls, App permissions, built-in role Secret verbs,
   timed-out pull request left open, Rollouts controller requirement) -> check each in slice 1.
-- Project: Akuity, about 3.8k GitHub stars on 2026-11-18, minors every two to three months (twelve
-  from October 2024 to July 2026), patches for several minors at once (**V**).
+- The slice 1 sandbox relies on RFC 0020 (in review) choosing the ESO `fake` store for kind ->
+  if it picks the `kubernetes` provider, seed the dummy App key through that provider instead.
 
 ## Open questions
 
@@ -633,7 +650,7 @@ N/A: not accepted yet.
 - Steps: [all](https://docs.kargo.io/user-guide/reference-docs/promotion-steps/), [git-clone](https://docs.kargo.io/user-guide/reference-docs/promotion-steps/git-clone), [oci-download](https://docs.kargo.io/user-guide/reference-docs/promotion-steps/oci-download), [helm-template](https://docs.kargo.io/user-guide/reference-docs/promotion-steps/helm-template), [git-push](https://docs.kargo.io/user-guide/reference-docs/promotion-steps/git-push), [git-open-pr](https://docs.kargo.io/user-guide/reference-docs/promotion-steps/git-open-pr), [git-wait-for-pr](https://docs.kargo.io/user-guide/reference-docs/promotion-steps/git-wait-for-pr), [argocd-wait](https://docs.kargo.io/user-guide/reference-docs/promotion-steps/argocd-wait), Gitea labels [issue 6021](https://github.com/akuity/kargo/issues/6021)
 - Argo: [argo-helm](https://github.com/argoproj/argo-helm) (Rollouts chart `argo-rollouts-2.43.12`, app `v1.10.2`), [Argo CD releases](https://github.com/argoproj/argo-cd/releases) (`v3.6.2`), [Source Hydrator](https://argo-cd.readthedocs.io/en/stable/user-guide/source-hydrator/)
 - [Cilium DNS-based policies](https://docs.cilium.io/en/stable/security/dns/)
-- Related: ADR-0004, ADR-0007, ADR-0008 (refined here), ADR-0009 (extended by the `promotion` field), ADR-0010, ADR-0016, ADR-0019, RFC 0020 (kind `fake` store)
+- Related: ADR-0004, ADR-0007, ADR-0008 (refined here), ADR-0009 (extended by the `promotion` field), ADR-0010, ADR-0016, ADR-0019, RFC 0020 (in review: proposes the kind `fake` store)
 
 ## Future work
 
