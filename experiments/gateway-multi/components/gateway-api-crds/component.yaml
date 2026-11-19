@@ -1,0 +1,10 @@
+---
+# Single owner of every gateway.networking.k8s.io CRD on the cluster.
+# No upstream Helm chart exists: the source is the per-file CRD set of a
+# pinned kubernetes-sigs/gateway-api tag, verified against
+# checksums/<version>-<channel>.sha256.
+name: gateway-api-crds
+source:
+  repo: kubernetes-sigs/gateway-api
+  version: v1.6.3
+  channel: standard

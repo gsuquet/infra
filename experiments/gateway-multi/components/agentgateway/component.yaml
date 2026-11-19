@@ -1,0 +1,11 @@
+---
+# Two charts: agentgateway-crds only carries agentgateway.dev CRDs (no
+# gateway.networking.k8s.io CRDs), so it does not compete with gateway-api-crds.
+name: agentgateway
+source:
+  - chart: agentgateway-crds
+    repo: oci://cr.agentgateway.dev/charts/agentgateway-crds
+    version: v1.7.0
+  - chart: agentgateway
+    repo: oci://cr.agentgateway.dev/charts/agentgateway
+    version: v1.7.0
