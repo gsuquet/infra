@@ -1,0 +1,18 @@
+---
+# kind-only values: kube-proxy replacement + Gateway API, nothing else.
+kubeProxyReplacement: true
+k8sServiceHost: exp-gateway-multi-control-plane
+k8sServicePort: 6443
+ipam:
+  mode: kubernetes
+operator:
+  replicas: 1
+hubble:
+  enabled: false
+gatewayAPI:
+  enabled: true
+  gatewayClass:
+    # "auto" (the default) checks .Capabilities for the GatewayClass API; `helm
+    # template` has no cluster, so the GatewayClass would silently be dropped
+    # from the rendered output. Force it.
+    create: "true"

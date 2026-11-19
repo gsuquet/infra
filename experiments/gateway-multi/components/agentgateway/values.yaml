@@ -1,0 +1,4 @@
+---
+# Istio CRDs are not installed: drop the RBAC for ServiceEntry/WorkloadEntry.
+istio:
+  enabled: false
