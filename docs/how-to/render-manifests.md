@@ -35,7 +35,8 @@ pull request carries the manifests Argo CD will apply.
    mise run policy:check
    ```
 
-   `[INFO] 1 cluster(s) valid` per root, then `0 failures`.
+   `manifests:validate` prints `[INFO] Validating <dir>` and a kubeconform summary with `Invalid: 0, Errors: 0`
+   per cluster, then one `[INFO] <n> cluster(s) valid`. `policy:check` reports `0 failures`.
 
 4. Commit the source change and `rendered/` in the same commit.
 

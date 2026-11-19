@@ -76,6 +76,7 @@ default deny.
 
 | Open item | Status |
 | --- | --- |
+| Which part renders platform Namespaces and tenant onboarding: the `rendered/platform/` layer (ADR-0010) or a component, now that `network-policy` holds the policies | open, pending an RFC |
 | Tenant allow rules (ingress from a Gateway, egress to a database or external service) | deferred, likely in the tenant file |
 | `ValidatingAdmissionPolicy` rejecting a `Namespace` without the policy and Pod Security labels | deferred |
 | `SecretStore` in the tenant blacklist: a tenant could ship its own store named `secrets` | risk, pending the owner's decision |

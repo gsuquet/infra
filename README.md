@@ -17,12 +17,12 @@ flowchart LR
 
 *IaC builds and bootstraps each cluster; Argo CD runs everything else from rendered manifests.*
 
-> OpenTofu replaces Terraform (RFC 0022, accepted). Until the migration lands, the tooling and every command
-> below still run Terraform.
+> Which IaC binary the commands run today: [IaC tool](docs/reference/terraform-modules.md#iac-tool).
 
 ## Quick start
 
-Prerequisites: [mise](https://mise.jdx.dev/); every other tool is pinned in `.mise/config.toml` and
+Prerequisites: [mise](https://mise.jdx.dev/) 2026.10.24 or later (tested version; `lockfile = true` needs a
+recent release). Every other tool, `pre-commit` 4.7.0 included, is pinned in `.mise/config.toml` and
 `.mise/mise.lock`.
 
 ```sh
@@ -50,11 +50,8 @@ Plan the Cloudflare landing zone with the read-only token
 mise run tf:read plan -lock=false
 ```
 
-Create, plan or destroy a cluster (planned, [cluster lifecycle](docs/concepts/cluster-lifecycle.md)):
-
-```sh
-mise run cluster:up kind-dev
-```
+Create, plan or destroy a cluster: planned as `mise run cluster:up|plan|down <name>`; the tasks do not exist yet
+([cluster lifecycle](docs/concepts/cluster-lifecycle.md)).
 
 ## Development
 

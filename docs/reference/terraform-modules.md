@@ -1,7 +1,11 @@
 # Terraform roots and modules reference
 
-Every IaC root and child module of the repository, with its state and status, as of `main`. The tool is Terraform
-today; OpenTofu replaces it (RFC 0022, accepted).
+Every IaC root and child module of the repository, with its state and status, as of `main`.
+
+## IaC tool
+
+OpenTofu replaces Terraform (RFC 0022, accepted). Commands use the binary `.mise/config.toml` pins: `terraform`
+until the migration lands, `tofu` after; every other page links here instead of repeating this.
 
 ## Roots
 
@@ -38,4 +42,5 @@ changes.
 ## Lock files
 
 Each root's `.terraform.lock.hcl` hashes `darwin_arm64`, `linux_amd64` and `linux_arm64`. The
-`terraform_providers_lock` pre-commit hook regenerates a lock file only when a platform is missing.
+`terraform_providers_lock` pre-commit hook checks them and regenerates a lock file only when a platform is missing.
+Child modules commit no lock file (`.gitignore`).

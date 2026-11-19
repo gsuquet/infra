@@ -47,9 +47,11 @@ sequenceDiagram
 
 | Target | Cluster module | State |
 | --- | --- | --- |
-| kind | `cluster-kind`: default CNI and kube-proxy disabled | local, no remote backend |
-| Talos | `cluster-talos`: `siderolabs/talos` provider | R2 bucket `terraform-state`, key `clusters/<name>/terraform.tfstate` |
-| GKE | `cluster-gke`: Dataplane V2, GKE Gateway API, Spot and/or on-demand pools | same R2 bucket and key pattern |
+| kind | `cluster-kind` | local, no remote backend |
+| Talos | `cluster-talos` | R2 |
+| GKE | `cluster-gke` | R2 |
+
+*Module inputs, bucket, state keys and locking: [Terraform roots and modules](../reference/terraform-modules.md).*
 
 ## Why it works this way
 
@@ -61,7 +63,7 @@ sequenceDiagram
 | `destroy` must not depend on what Argo CD created (cloud load balancers) | `cluster:down` documents the order | [ADR-0015](../adr/0015-bootstrap-boundary.md) |
 | A broken Argo CD self-update cannot repair itself | re-apply `rendered/argocd/` by hand (the bootstrap module applies the same files) | [ADR-0004](../adr/0004-self-managed-argo-cd-per-cluster.md) |
 | kind must work offline and without secrets | kind state is local and lost with the machine | [ADR-0018](../adr/0018-terraform-state-backends.md) |
-| One backend for all long-lived state | R2, with `use_lockfile = true`; R2 has no object versioning, so a corrupted state cannot be restored from the bucket; GKE state lives outside Google Cloud | [ADR-0018](../adr/0018-terraform-state-backends.md) |
+| One backend for all long-lived state | R2; it has no object versioning, so a corrupted state cannot be restored from the bucket; GKE state lives outside Google Cloud | [ADR-0018](../adr/0018-terraform-state-backends.md) |
 | CI must hold no secret and touch no state | `plan` stays local: the author pastes the relevant output in the pull request | [ADR-0019](../adr/0019-lifecycle-tasks-and-ci-scope.md) |
 
 Deferred: a kind end-to-end CI job (create, bootstrap, wait for Argo CD healthy).

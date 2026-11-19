@@ -39,7 +39,9 @@ sequenceDiagram
 
 ## Step 3: Change a component
 
-(planned) Change one value in the cluster's `cluster.yaml`, render, and see Argo CD apply the new manifests.
+(planned) Change one value in the cluster's `cluster.yaml`, render, then commit and push both to the branch the
+kind cluster's root `Application` tracks (not decided yet): Argo CD syncs from the Git remote, never from your
+working tree. See Argo CD apply the new manifests.
 
 ## Step 4: Delete the cluster
 

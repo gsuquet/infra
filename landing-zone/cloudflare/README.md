@@ -29,7 +29,7 @@ A plan with no unexpected change.
 
 ```mermaid
 flowchart LR
-    pass[(Proton Pass<br/>vault Personal)]
+    pass[(Proton Pass vault<br/>see pass/*.env)]
     env[pass/*.env<br/>pass:// references only]
     run[[pass-cli run]]
     tf[terraform process]
@@ -44,11 +44,17 @@ flowchart LR
 
 *Credentials never leave the Terraform process: `pass/*.env` holds references, `pass-cli run` resolves them.*
 
-| Pass item | Fields | Used by |
-| --- | --- | --- |
-| `cloudflare-infra-write` | `password`: account API token (write); `account_id` | `mise run tf` (`pass/write.env`) |
-| `cloudflare-infra-read` | `password`: read-only twin; `account_id` | `mise run tf:read` (`pass/read.env`) |
-| `cloudflare-infra-r2-state` | `username`: R2 token ID; `password`: SHA-256 of the token value; `endpoint`: `https://<account_id>.r2.cloudflarestorage.com` | both (`pass/state.env`) |
+One Proton Pass item, `cloudflare`, holds every credential; `pass/*.env` reference its fields as
+`pass://<vault>/cloudflare/<field>`.
+
+| Field | Holds | Env var | Env file |
+| --- | --- | --- | --- |
+| `write-api-token` | account API token, write (permissions: TODO(owner), not documented yet) | `CLOUDFLARE_API_TOKEN` | `pass/write.env` (`mise run tf`) |
+| `read-api-token` | read-only twin of the write token | `CLOUDFLARE_API_TOKEN` | `pass/read.env` (`mise run tf:read`, `cf:*`, agents) |
+| `account-id` | Cloudflare account ID | `TF_VAR_account_id` | `pass/write.env`, `pass/read.env` |
+| `state-access-key-id` | R2 token ID, scoped to the state bucket | `AWS_ACCESS_KEY_ID` | `pass/state.env` (both tasks) |
+| `state-access-key-secret` | SHA-256 of the R2 token value | `AWS_SECRET_ACCESS_KEY` | `pass/state.env` |
+| `state-endpoint-url` | `https://<account_id>.r2.cloudflarestorage.com` | `AWS_ENDPOINT_URL_S3` | `pass/state.env` |
 
 | Task | Command |
 | --- | --- |
@@ -71,7 +77,8 @@ flowchart LR
 ## Bootstrap (first apply only)
 
 This root creates the bucket that stores its own state, so the first apply runs on local state, before the
-`cloudflare-infra-r2-state` item exists.
+`state-*` fields of the `cloudflare` item exist (hence `pass-cli run` with `pass/write.env` only, without
+`pass/state.env`).
 
 ```mermaid
 sequenceDiagram
@@ -83,7 +90,7 @@ sequenceDiagram
     Owner->>TF: pass-cli run (write.env) terraform init + apply
     TF->>CF: create the state bucket, import existing resources
     Owner->>TF: rm bootstrap_override.tf
-    Owner->>CF: create an R2 token scoped to the bucket, store it as cloudflare-infra-r2-state
+    Owner->>CF: create an R2 token scoped to the bucket, store it in the state-* fields of the cloudflare item
     Owner->>TF: mise run tf init -migrate-state
     TF->>R2: copy local state
     Owner->>TF: rm terraform.tfstate terraform.tfstate.backup
@@ -96,7 +103,7 @@ printf 'terraform {\n  backend "local" {}\n}\n' > bootstrap_override.tf   # giti
 pass-cli run --env-file pass/write.env -- terraform init
 pass-cli run --env-file pass/write.env -- terraform apply   # creates the state bucket, imports existing resources
 rm bootstrap_override.tf
-# Create an R2 API token scoped to the bucket in the dashboard, store it as cloudflare-infra-r2-state
+# Create an R2 API token scoped to the bucket in the dashboard, store it in the state-* fields of the cloudflare item
 mise run tf init -migrate-state       # copies local state into R2
 rm terraform.tfstate terraform.tfstate.backup
 ```

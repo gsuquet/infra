@@ -128,5 +128,5 @@ flowchart LR
 
 | Job | Notes |
 | --- | --- |
-| Pre-commit hooks | `pre-commit run --all-files`; `terraform_providers_lock` checks each root's lock file hashes `darwin_arm64`, `linux_amd64`, `linux_arm64`, regenerating only one that misses a platform; child modules commit no lock file (`.gitignore`) |
+| Pre-commit hooks | `pre-commit run --all-files`, provider lock files included ([lock files](terraform-modules.md#lock-files)) |
 | GitOps tooling | the seven tasks above, in order |

@@ -59,5 +59,4 @@ flowchart LR
 | RFC | [`rfc/`](rfc/) | propose a one-way or wide change |
 | ADR | [`adr/`](adr/README.md) | read an accepted decision, generated from its RFC |
 
-The IaC tool is moving from Terraform to OpenTofu (RFC 0022, accepted); until the migration lands, every command in
-these pages still runs `terraform`.
+Which IaC binary the commands run today: [IaC tool](reference/terraform-modules.md#iac-tool).

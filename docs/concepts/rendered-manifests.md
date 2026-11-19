@@ -55,14 +55,15 @@ hooks never render.
 
 ### Where policy and tenant resources come from
 
-| Resource | Rendered by |
-| --- | --- |
-| Cluster-wide default deny, platform network policies | `network-policy` baseline component, every cluster (decided 2026-11-19, ADR pending) |
-| Tenant namespaces, `AppProject`, `ResourceQuota`, `LimitRange`, `SecretStore`, `Application` | components reading the injected `gitops.tenants` value |
+| Resource | Rendered by | Decision |
+| --- | --- | --- |
+| Cluster-wide default deny, platform network policies | `network-policy` baseline component, every cluster | decided 2026-11-19, ADR pending |
+| Platform `Namespace` manifests, with the policy and Pod Security labels | render-emitted cluster layer `rendered/platform/` | [ADR-0010](../adr/0010-cluster-owned-default-deny-network-policy.md) |
+| Tenant onboarding: namespaces, `AppProject`, `ResourceQuota`, `LimitRange`, `SecretStore`, `Application` | render-emitted cluster layer `rendered/platform/` | [ADR-0009](../adr/0009-tenant-onboarding-by-infra.md), [ADR-0010](../adr/0010-cluster-owned-default-deny-network-policy.md) |
 
-[ADR-0010](../adr/0010-cluster-owned-default-deny-network-policy.md) reserved `platform` for a render-emitted
-cluster layer (`rendered/platform/`: platform Namespaces, tenant onboarding, default deny). The `network-policy`
-component replaces its policy part; the render does not emit that layer today, and `platform` stays reserved.
+The `network-policy` component replaces only the policy part of the `rendered/platform/` layer. The render does not
+emit that layer yet, and `platform` stays a reserved name. Open: whether platform Namespaces and tenant onboarding
+stay in that layer or move to a component, pending an RFC.
 
 ## Why it works this way
 
