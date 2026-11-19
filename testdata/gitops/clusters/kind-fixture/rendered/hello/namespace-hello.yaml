@@ -1,0 +1,10 @@
+---
+# Source: hello/templates/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hello
+  labels:
+    network.infra.gsuquet.com/policy: default-deny
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"

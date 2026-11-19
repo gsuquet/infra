@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#MISE description="Lint and check the format of the shell scripts of the mise tasks (shellcheck, shfmt)"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+
+# shellcheck source=SCRIPTDIR/../_lib/gitops.sh
+source .mise/tasks/_lib/gitops.sh
+
+require shellcheck shfmt
+
+# Task files have no extension: select them by their shebang. Libraries have
+# a "# shellcheck shell=bash" directive instead.
+files=()
+while IFS= read -r file; do
+  if head -1 "$file" | grep -qE '^#!.*(bash|sh)$' || head -1 "$file" | grep -q '^# shellcheck shell='; then
+    files+=("$file")
+  fi
+done < <(git ls-files --cached --others --exclude-standard -- .mise/tasks | LC_ALL=C sort)
+
+log_info "Checking ${#files[@]} script(s)"
+shellcheck --external-sources "${files[@]}"
+# Flags, not .editorconfig: shfmt ignores .editorconfig as soon as one flag is
+# given. Fix with: shfmt --write <same flags> <file>.
+shfmt --diff --indent 2 --case-indent --binary-next-line --space-redirects "${files[@]}"

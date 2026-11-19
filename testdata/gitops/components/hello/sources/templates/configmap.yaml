@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  cluster: {{ .Values.gitops.cluster.name | quote }}
+  target: {{ .Values.gitops.cluster.target | quote }}
+  tenants: {{ .Values.gitops.tenants | keys | sortAlpha | join "," | quote }}

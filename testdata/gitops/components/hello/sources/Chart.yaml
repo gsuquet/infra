@@ -1,0 +1,12 @@
+---
+# Umbrella chart: the catalog pattern. The dependency is the upstream chart,
+# here a local one so the fixture renders offline.
+apiVersion: v2
+name: hello
+description: Umbrella chart of the hello test component.
+type: application
+version: 0.1.0
+dependencies:
+  - name: hello
+    version: 0.1.0
+    repository: file://../../../../charts/hello

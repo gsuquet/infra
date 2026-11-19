@@ -1,0 +1,13 @@
+# A `helm test` hook: manifests:render leaves it out (--skip-tests).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}-test
+  annotations:
+    helm.sh/hook: test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: busybox:1.37
+      command: ["true"]

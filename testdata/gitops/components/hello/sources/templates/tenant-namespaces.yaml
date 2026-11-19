@@ -1,0 +1,19 @@
+{{- /*
+The namespaces of the cluster's tenants, labelled for the default-deny, as the
+future tenants component will render them. Proves that policy:check sees the
+tenant namespaces through data.clusters.
+*/ -}}
+{{- range $tenant, $spec := .Values.gitops.tenants }}
+{{- range $spec.namespaces }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ . }}
+  labels:
+    network.infra.gsuquet.com/policy: default-deny
+    infra.gsuquet.com/tenant: {{ $tenant }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+{{- end }}
+{{- end }}
