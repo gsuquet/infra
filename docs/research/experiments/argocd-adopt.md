@@ -1,10 +1,14 @@
 # Experiment 1: Argo CD adopts the bootstrap (argocd-adopt)
 
-Status: done, 2026-11-19. Result: **the bootstrap boundary works**. Argo CD
-adopts the Gateway API CRDs, Cilium and itself with no pod restart, no prune,
-no OutOfSync loop, and then upgrades itself with no failed health probe. Two
-conditions: the bootstrap applies with server-side apply **as the field
-manager `argocd-controller`**, and Terraform never applies the files again.
+Status: done, 2026-11-19; revised after review the same day (no new cluster
+run, see [Review follow-up](#review-follow-up)). Result: **the bootstrap
+boundary works for Cilium and Argo CD**. Argo CD adopts Cilium and itself with
+no pod restart, no prune and no OutOfSync loop in the watch window, and then
+upgrades itself with no failed health probe. **It applies the Gateway API CRDs,
+but its ownership of them is unverified**: they never get a tracking
+annotation. Two conditions: the bootstrap applies with server-side apply **as
+the field manager `argocd-controller`**, and Terraform never applies the files
+again.
 
 Scripts: [`experiments/argocd-adopt/`](../../../experiments/argocd-adopt/).
 One command creates the cluster, runs all the checks and deletes the cluster.
@@ -65,6 +69,12 @@ flowchart LR
   `syncOptions: [ServerSideApply=true]`. Argo CD has
   `controller.diff.server.side: true` and `application.resourceTrackingMethod:
   annotation` (the 3.x default, set to be visible).
+- **Experiment-only settings, not for the component catalog:** the AppProject
+  `platform` allows every destination namespace and every cluster-scoped kind
+  (`clusterResourceWhitelist: */*`), Argo CD runs with `server.insecure: true`,
+  and the git daemon has no auth and accepts pushes. Do not copy any of these into
+  `gitops/components/argocd`: the real `platform` project needs its source repo,
+  destinations and cluster resources scoped to the platform components.
 - **Probe component:** two ConfigMaps with keys `a` and `b`. The bootstrap applies
   `probe-kubectl` with the field manager `kubectl` (the kubectl default) and
   `probe-argocd` with `argocd-controller`. A later commit removes `b` from both.
@@ -97,6 +107,12 @@ cd experiments/argocd-adopt
 mise install
 mise exec -- ./run.sh
 ```
+
+`run.sh` switches added after the review (not run yet): `REFRESH_SELF=false`
+(no refresh annotation on the `argocd` Application itself),
+`GENERATE_PATHS=true` (`argocd.argoproj.io/manifest-generate-paths: .` on every
+Application) and `WATCH_SECONDS` (default 300). The defaults reproduce runs 2
+to 6, except for the longer watch and the new phase 5b.
 
 `run.sh` fails if a cluster `exp-argocd-adopt` exists, and always deletes the
 cluster at the end, also on failure (`trap … EXIT`). It writes everything to
@@ -138,8 +154,12 @@ gateway-api-crds  Synced  Healthy  01cb93f8  1      Succeeded
 probe             Synced  Healthy  01cb93f8  1      Succeeded
 ```
 
-- **No OutOfSync loop.** Sampled every 10 s for 120 s: no sample not Synced, and
-  the sync history did not grow:
+- **No OutOfSync loop in a 120 s window.** Sampled every 10 s for 120 s: no
+  sample not Synced, and the sync history did not grow. Limit: Argo CD's default
+  reconcile period is 120 s plus up to 60 s of jitter, so this window may not hold
+  one full periodic reconcile, and a flap shorter than 10 s can fall between two
+  samples. `run.sh` now watches 300 s with a hard refresh midway and compares
+  `reconciledAt`; that version has not run yet.
 
   ```text
   sync history before: [{"n":"argocd","h":1},{"n":"cilium","h":1},{"n":"gateway-api-crds","h":1},{"n":"probe","h":1}]
@@ -178,23 +198,57 @@ probe             Synced  Healthy  01cb93f8  1      Succeeded
   sts/argocd-application-controller: argocd:apps/StatefulSet:argocd/argocd-application-controller
   ```
 
-- **CRDs get no tracking annotation, but Argo CD manages them.** Checked on
-  `httproutes.gateway.networking.k8s.io` and `applications.argoproj.io`: no
-  tracking annotation, and `httproutes` shows `Synced` in its Application. Argo CD
-  applies them (`argocd-controller Apply` with a new timestamp after a CRD change
-  in Git, phase 5, and the new label is there), but never writes
-  `argocd.argoproj.io/tracking-id` on them. The cause is not verified (not in the
-  [resource tracking docs](https://argo-cd.readthedocs.io/en/stable/user-guide/resource_tracking/)).
-  Effect: a CRD removed from Git is probably not pruned. The plan sets
-  `Prune=false` on CRDs anyway.
+- **CRDs: Argo CD applies them, but they get no tracking annotation.
+  Ownership is unverified.** Checked on `httproutes.gateway.networking.k8s.io`
+  and `applications.argoproj.io`. The full `crd_state` output of run 6 lists every
+  annotation key, and `argocd.argoproj.io/tracking-id` is not among them, after
+  adoption and after a sync that changed the CRD:
 
   ```text
+  crd/httproutes: 
+  crd/applications: 
+  crd/httproutes after adoption:
+    annotations: api-approved.kubernetes.io, argocd.argoproj.io/sync-wave, gateway.networking.k8s.io/bundle-version, gateway.networking.k8s.io/channel
+    labels: 
+    manager: argocd-controller Apply 2026-11-18T23:23:41Z
+    manager: kube-apiserver Update 2026-11-18T23:23:41Z
+    status in the Application: Synced 
+  [...]
   crd/httproutes after a CRD change in git:
+    annotations: api-approved.kubernetes.io, argocd.argoproj.io/sync-wave, gateway.networking.k8s.io/bundle-version, gateway.networking.k8s.io/channel
     labels: exp.invalid/rev
     manager: argocd-controller Apply 2026-11-18T23:27:36Z
     manager: kube-apiserver Update 2026-11-18T23:23:41Z
-    tracking-id:
+    tracking-id: 
   ```
+
+  What is proven: Argo CD applies the CRDs. The `argocd-controller Apply` entry
+  gets a new timestamp after the CRD change in Git, and the new label is there.
+  Note that the bootstrap also applied as `argocd-controller`, so the managed
+  fields alone cannot tell the bootstrap and Argo CD apart: only the new
+  timestamp and the label show that Argo CD applied. The sync result of every
+  CRD is `CRD is healthy`, where the other kinds report `serverside-applied`:
+
+  ```text
+  argocd CustomResourceDefinition x3: CRD is healthy
+  gateway-api-crds CustomResourceDefinition x10: CRD is healthy
+  ```
+
+  What is not proven: that Argo CD owns them. The
+  [resource tracking docs](https://argo-cd.readthedocs.io/en/stable/user-guide/resource_tracking/)
+  say Argo CD uses the tracking annotation to decide whether a live object
+  belongs to an Application, and an object whose annotation points elsewhere
+  "will neither affect the application's sync status nor be marked for pruning".
+  The docs say nothing about an object with no annotation, and nothing special
+  about CRDs. A likely reading (unverified): the `Synced` status comes from the
+  comparison of the Git object with the live object of the same name, which
+  needs no tracking, while pruning needs the annotation. Then a CRD removed from
+  Git would be orphaned, not pruned and not reported. The cause of the missing
+  annotation is unknown: an Argo CD special case for CRDs, a probe bug and the
+  shared field manager are all still open. Phase 5b of `run.sh` (added after the
+  review, not run yet) removes one CRD from Git without `Prune=false` and records
+  whether it is pruned, orphaned or reported OutOfSync, and compares the CRDs
+  listed in the Application with the live ones.
 
 - **Helm hooks.** The chart renders `argocd-redis-secret-init` (ServiceAccount,
   Role, RoleBinding, Job) with `helm.sh/hook: pre-install,pre-upgrade`. kubectl
@@ -273,11 +327,30 @@ The sync history of the `argocd` Application has one auto-sync per commit:
 #3 rev d608be44 started 2026-11-18T23:28:55Z deployed 2026-11-18T23:29:34Z by auto-sync
 ```
 
-Sync #1 is for the probe commit, which did not change `rendered/argocd/`. It
-changed nothing: the pods and workload generations before and after it are the
-same. The cause is not verified; a likely one is the `refresh` annotation that
-`run.sh` puts on the child Applications, which are resources of the `argocd`
-Application.
+**Open issue: sync #1.** It is for the probe commit, which did not change
+`rendered/argocd/`. Argo CD auto-syncs only an OutOfSync Application
+([auto-sync docs](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/#automated-sync-semantics)),
+so some resource of the `argocd` Application was OutOfSync on an unrelated
+commit. The sync changed no pod and no workload generation, but each sync of
+this Application runs the `argocd-redis-secret-init` PreSync hook Job again. If
+the trigger is not an artifact of `run.sh`, every merge to `infra` would sync Argo
+CD and run that Job. Run 6 did not record which resource was OutOfSync. The
+cause is not verified. Candidates:
+
+- The `argocd` Application is in its own resource tree (its sync result lists
+  `application.argoproj.io/argocd`), and `run.sh` puts the
+  `argocd.argoproj.io/refresh` annotation on it and on its three children, all of
+  which are resources of the `argocd` Application. This would be an artifact of
+  the experiment.
+- The children write their own `operation` and `status` during their own syncs
+  (the probe and CRD commit made two of them sync). If the `argocd` Application
+  sees that as a diff, it would happen on every commit that syncs a child. This
+  would be a real cost.
+
+`run.sh` now records the OutOfSync resources of the `argocd` Application while
+it waits for each revision, and has `REFRESH_SELF=false` and
+`GENERATE_PATHS=true` to tell the candidates apart. Not run yet: a cluster run
+was out of scope for the review follow-up.
 
 ### A stale re-apply (phase 8, dry-run)
 
@@ -286,7 +359,7 @@ What happens if Terraform applies the v1 files again after the upgrade
 Deployment):
 
 ```text
-- field manager 'kubectl' (Terraform default), no force-conflicts:
+- field manager 'kubectl' (alekc/kubectl kubectl_manifest default), no force-conflicts:
   error: Apply failed with 6 conflicts: conflicts with "argocd-controller":
   - .metadata.labels.app.kubernetes.io/version
   - .metadata.labels.helm.sh/chart
@@ -296,6 +369,16 @@ Deployment):
 - field manager 'argocd-controller' (same as Argo CD):
   accepted, image would become quay.io/argoproj/argocd:v3.5.6
 ```
+
+The field manager depends on the Terraform provider. `alekc/kubectl`
+`kubectl_manifest` (the homelab module, pinned there at 2.2.0) has
+`field_manager`, default `kubectl`, and `server_side_apply`
+([registry docs, 3.0.1](https://registry.terraform.io/providers/alekc/kubectl/latest/docs/resources/kubectl_manifest)).
+`hashicorp/kubernetes` `kubernetes_manifest` has a `field_manager { name }` block
+([registry docs, 3.5.0](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/manifest));
+its default name (`Terraform`) is not on that page: unverified. The conclusions
+below assume `kubectl_manifest` with `field_manager = "argocd-controller"` and
+`server_side_apply = true`.
 
 With the shared manager, a re-apply is accepted with no warning and **downgrades
 Argo CD**, until `selfHeal` puts the Git version back (another rollout). With a
@@ -314,37 +397,49 @@ fields away from Argo CD. So a second apply is wrong in both cases.
 - **Investigations, not failures:** runs 2 to 5 added diagnostics for the
   Deployment generation bump, the CRD tracking and the hook Jobs. The results did
   not change between runs.
-- **Not tested:** a real Terraform run (the `kubectl` provider), a Cilium chart
+- **Not tested:** a real Terraform run (the `kubectl` provider), the changes
+  to `run.sh` made after the review (phase 5b, longer watch, OutOfSync
+  recording, `REFRESH_SELF`, `GENERATE_PATHS`), client-side apply or client-side
+  diff as controls, a Cilium chart
   upgrade through Argo CD, an upgrade of the Gateway API bundle to a new version
   (only a label change), multi-replica Argo CD, Argo CD HA Redis, the downtime of
   the data plane during a Cilium upgrade.
 
 ## Conclusions for the plan
 
-1. **The bootstrap boundary holds.** Terraform installs the cluster, the Gateway
-   API CRDs, Cilium and Argo CD from the rendered files; one `argocd` Application
-   (app of apps) takes everything over in about 20 s with no restart and no prune.
-   Argo CD then upgrades itself from Git (config and version) with no failed
-   `argocd-server` health probe.
+1. **The bootstrap boundary holds for Cilium and Argo CD.** The bootstrap
+   (kubectl mimicking Terraform) installs the Gateway API CRDs, Cilium and Argo
+   CD from the rendered files; one `argocd` Application (app of apps) adopts
+   Cilium and Argo CD in about 20 s with no restart and no prune. Argo CD then
+   upgrades itself from Git (config and version) with no failed `argocd-server`
+   health probe. The Gateway API CRDs are applied by Argo CD, but not tracked
+   (see the CRD result): their ownership is unverified until phase 5b runs. One
+   open issue: an unrelated commit made the `argocd` Application sync itself
+   (sync #1).
 2. **Tracking method: `annotation`** (the Argo CD 3.x default). Set it explicitly
    in `argocd-cm`. The rendered files do not need a pre-set tracking annotation:
    the first sync adds it with no rollout. The only side effect is a Deployment
-   generation +1.
-3. **Sync options:**
-   - `ServerSideApply=true` on every Application. Needed for the large CRDs (the
-     262144-byte annotation limit of client-side apply) and for clean adoption.
-     Argo CD applies with `--force-conflicts`
+   generation +1. CRDs are the exception: no annotation (open issue).
+3. **Sync options.** Only server-side apply with server-side diff was run; the
+   first two items are recommendations, not compared with a control:
+   - `ServerSideApply=true` on every Application (tested configuration, no
+     control run with client-side apply). Reasons from the docs, not from this
+     run: the large CRDs hit the 262144-byte annotation limit of client-side
+     apply, and Argo CD applies with `--force-conflicts`
      ([docs](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/#server-side-apply)),
      so it always wins a conflict.
-   - `controller.diff.server.side: true`. With it, no OutOfSync loop on defaulted
-     fields.
+   - `controller.diff.server.side: true` (tested configuration, no control run
+     with client-side diff). With it, no OutOfSync loop was seen; whether the
+     client-side diff would loop on defaulted fields is not tested.
    - **`Replace=true`: not needed** for any CRD here. Avoid it: it takes
      precedence over server-side apply, uses `kubectl replace/create`, and the
      docs warn it can recreate resources
      ([docs](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/#replace-resource-instead-of-applying-changes)).
-   - `Prune=false` on CRDs (chart value `crds.annotations` for Argo CD, a render
+   - **Proposal for the plan** (not in the settled plan, not tested here):
+     `Prune=false` on CRDs (chart value `crds.annotations` for Argo CD, a render
      step for the others), and `Prune=false,Delete=false` on the `argocd`
-     Namespace and `argocd-secret`.
+     Namespace and `argocd-secret`. Given the CRD tracking issue, removing a CRD
+     must be a manual step anyway.
    - `PrunePropagationPolicy`: no effect on adoption (nothing is pruned). Keep the
      default (`foreground`, per the
      [docs](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/#resources-prune-deletion-propagation-policy)).
@@ -354,37 +449,84 @@ fields away from Argo CD. So a second apply is wrong in both cases.
    must make it the rule for all three bootstrap modules (`bootstrap-gateway-api`,
    `bootstrap-cilium`, `bootstrap-argocd`), not only Argo CD.
 5. **Terraform must not apply again.** With the shared manager a re-apply
-   silently downgrades (phase 8). Two options:
+   silently downgrades (phase 8). Phase 8 tested only a stale update of an
+   existing object, not Terraform's create and destroy paths. Options:
    - `kubectl_manifest` per document with `server_side_apply = true`,
      `field_manager = "argocd-controller"` and `lifecycle { ignore_changes = all }`
-     (the homelab design). The state still holds every resource: `terraform
-     destroy` on the root would delete them, and a provider upgrade that changes
-     the resource schema can plan a replace. Acceptable, because a cluster root
-     destroys the cluster anyway.
+     (the homelab design). `ignore_changes` only stops in-place updates. It does
+     not stop:
+     - **re-creation**: an object gone from the cluster (deleted by Argo CD, by a
+       TTL, by hand) leaves the state on refresh, and the next apply creates it
+       again, without the tracking annotation;
+     - **create and destroy on key changes**: the `for_each` keys come from the
+       rendered files at the checked-out HEAD. A plan or apply from a feature
+       branch, or after a merge that adds or removes a document, creates objects
+       from unmerged or newer renders (Argo CD does not track them until a sync)
+       or destroys objects that left the render (Argo CD may still want them);
+     - `terraform destroy` on the root deletes them (acceptable: a cluster root
+       destroys the cluster anyway); `alekc/kubectl` 3.x has `apply_only` to skip
+       the delete (docs only, not tested);
+     - a provider upgrade that changes the schema can plan a replace.
+   - Pin the bootstrap input to a fixed snapshot instead of HEAD (a copy of
+     `rendered/{gateway-api-crds,cilium,argocd}` made at cluster creation, or a
+     Git ref in a variable). The key set then stops moving with `main`; the
+     re-create risk stays.
    - A one-shot apply (`terraform_data` + `local-exec` `kubectl apply
      --server-side --field-manager=argocd-controller`, triggered by the cluster
-     ID). No resource in the state, so no drift and no accidental re-apply; but
-     a `kubectl` dependency and no plan output.
+     ID). No Kubernetes object in the state, so no drift, no re-create and no
+     key-set churn; but a `kubectl` dependency on the runner and no plan output.
 
-   Recommendation: `kubectl_manifest` + `ignore_changes = all`, as tested in
-   homelab, unless the owner prefers a state with no Kubernetes objects.
+   No recommendation until a Terraform run (`mise run cluster:up` twice, once
+   after a render change and once after Argo CD deleted a bootstrap object)
+   compares the options. Leaning: the one-shot apply, since the bootstrap is by
+   design a one-time hand-over.
 6. **Cilium must not use `hubble.tls.auto.method=helm`** with rendered manifests:
    the render is not reproducible. Use `certmanager` (cert-manager is a baseline
    component, but it comes after Cilium) or `cronJob`, or keep Hubble TLS off in
    the bootstrap and turn it on later. To decide in the Cilium component.
-7. **Helm hooks are fine.** Argo CD runs the chart hooks as `PreSync` hooks. The
-   homelab trick (a renamed copy of the hook Job) is only for a clean
-   `terraform plan`, because the Job deletes itself after 60 s
-   (`ttlSecondsAfterFinished`); with `ignore_changes = all` it is not needed for
-   adoption. Not tested with Terraform.
+7. **Helm hooks are fine for Argo CD, not for `kubectl_manifest`.** Argo CD runs
+   the chart hooks as `PreSync` hooks. Under `kubectl_manifest` +
+   `ignore_changes = all`, the hook Job deletes itself after 60 s
+   (`ttlSecondsAfterFinished`), so every later `mise run cluster:up` would
+   re-create it and run it again as a plain Job. The homelab trick is therefore
+   required with that option: apply a renamed copy without the hook annotations
+   and without the TTL (homelab `modules/bootstrap-argocd/main.tf`), or drop the
+   hook resources from the bootstrap set and let Argo CD's first sync run them.
+   The one-shot apply needs neither. Not tested with Terraform.
 8. **Generic render rule:** every CRD gets `argocd.argoproj.io/sync-wave: "-1"`
    (done here with one `yq` expression over all files). Kept for the plan.
+
+## Review follow-up
+
+A review of the first version found unproven claims. No cluster was created for
+the follow-up; the changes rest on the saved run 6 log and on the docs:
+
+- CRD ownership downgraded to "applied, ownership unverified", with the full
+  `crd_state` output; phase 5b added to `run.sh`.
+- Sync #1 of the `argocd` Application is now an open issue, with OutOfSync
+  recording and two switches in `run.sh`.
+- Conclusions 5 and 7 rewritten: `ignore_changes` does not stop re-creation or
+  key-set changes, and the renamed hook copy is required under it.
+- The OutOfSync watch is now 300 s with a hard refresh midway.
+- Untested sync-option claims and the `Prune=false` item are labeled as
+  recommendations or proposals.
+- The Terraform provider and its default field manager are named.
+- Experiment-only settings flagged.
+- `cilium-cli` removed from `mise.toml` and `mise.lock` (unused).
 
 ## Open questions
 
 - **CRD tracking.** Why does Argo CD v3.5 not write the tracking annotation on
-  CRDs, and does a CRD removed from Git get pruned or orphaned? Matters only if
-  `Prune=false` is ever removed.
+  CRDs, and does a CRD removed from Git get pruned or orphaned? Phase 5b answers
+  the second part on the next run.
+- **Sync #1 of the `argocd` Application on an unrelated commit.** Artifact of
+  `run.sh` (self-refresh) or real (child Application status)? Next run with
+  `REFRESH_SELF=false`, then with `GENERATE_PATHS=true`. If it is real,
+  `argocd.argoproj.io/manifest-generate-paths` is a candidate fix to record in
+  the plan: since v2.11 Argo CD uses it also without webhooks, to skip
+  regeneration when no file under the paths changed
+  ([docs](https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/#manifest-paths-annotation)).
+  It would not help if the diff comes from live child Applications.
 - **Field manager for every bootstrap module.** The plan names the field manager
   only implicitly. Confirm: all bootstrap modules apply as `argocd-controller`.
 - **`kubectl_manifest` + `ignore_changes = all`, or a one-shot apply?**

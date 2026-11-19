@@ -16,6 +16,13 @@
 # Usage: ./run.sh   (from this folder, with `mise install` done)
 # Inputs (optional): GATEWAY_API_MANIFEST and CILIUM_CHART_TGZ, local copies
 # of the pinned artifacts; else run.sh downloads them. Their SHA-256 is checked.
+# Switches (optional):
+#   REFRESH_SELF=false     do not put the refresh annotation on the argocd
+#                          Application itself, only on its children (default
+#                          true, as in the runs of the write-up).
+#   GENERATE_PATHS=true    set argocd.argoproj.io/manifest-generate-paths: .
+#                          on every Application (default false).
+#   WATCH_SECONDS=300      length of the OutOfSync loop watch (default 300).
 set -Eeuo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -35,6 +42,9 @@ readonly ARGOCD_TO_SHA256=9f24a574ead97a1a68af447ab2678073c5e16a98ff9385aee766da
 # Terraform will apply with this field manager (see the write-up).
 readonly BOOTSTRAP_MANAGER=${BOOTSTRAP_MANAGER:-argocd-controller}
 readonly APPS=(argocd cilium gateway-api-crds probe)
+readonly REFRESH_SELF=${REFRESH_SELF:-true}
+readonly GENERATE_PATHS=${GENERATE_PATHS:-false}
+readonly WATCH_SECONDS=${WATCH_SECONDS:-300}
 
 WORK=${WORK:-$(mktemp -d "${TMPDIR:-/tmp}/exp-argocd-adopt.XXXXXX")}
 readonly WORK
@@ -121,6 +131,12 @@ render() { # argocd-chart-version [extra helm args for argocd]
   render_cilium >"$RENDERED/cilium/manifest.yaml"
   render_argocd "$version" "$@" >"$RENDERED/argocd/manifest.yaml"
   cp "$HERE"/components/argocd/*.yaml "$RENDERED/argocd/"
+  if [[ $GENERATE_PATHS == true ]]; then
+    # Each Application regenerates only when its own folder changes.
+    yq -i '(select(.kind == "Application")
+      | .metadata.annotations."argocd.argoproj.io/manifest-generate-paths") = "."' \
+      "$RENDERED/argocd/platform.yaml"
+  fi
   cp "$HERE"/components/probe/*.yaml "$RENDERED/probe/"
   local f
   for f in "$RENDERED"/*/*.yaml; do
@@ -188,9 +204,29 @@ apps_table() {
   } | column -t
 }
 
+# Resources of the argocd Application seen OutOfSync, one file per revision:
+# says what made Argo CD sync itself on a commit.
+record_argocd_oos() { # revision
+  kubectl -n argocd get applications.argoproj.io argocd -o json 2>/dev/null \
+    | jq -r '.status.resources[]? | select(.status == "OutOfSync")
+      | "\(.kind)/\(.namespace // "")/\(.name)"' >>"$WORK/oos-${1:0:8}" || true
+}
+
+show_argocd_oos() { # revision
+  echo "argocd Application resources seen OutOfSync while waiting for ${1:0:8}:"
+  sort -u "$WORK/oos-${1:0:8}" 2>/dev/null | sed 's/^/  /'
+  echo "(end of list)"
+  kubectl -n argocd get applications.argoproj.io argocd -o json | jq -r '
+    "argocd app last sync: rev \((.status.operationState.syncResult.revision // "-")[0:8])," +
+    " \([(.status.operationState.syncResult.resources // [])[]
+      | select(.hookType == null)] | length) resources applied"'
+}
+
 wait_apps() { # revision timeout-seconds
   local rev=$1 deadline=$((SECONDS + $2)) ready
+  : >>"$WORK/oos-${rev:0:8}"
   while ((SECONDS < deadline)); do
+    record_argocd_oos "$rev"
     ready=$(kubectl -n argocd get applications.argoproj.io -o json 2>/dev/null | jq --arg rev "$rev" '
       [.items[] | select(.status.sync.status == "Synced"
         and .status.health.status == "Healthy"
@@ -211,6 +247,7 @@ wait_apps() { # revision timeout-seconds
 refresh_apps() {
   local app
   for app in "${APPS[@]}"; do
+    [[ $app == argocd && $REFRESH_SELF != true ]] && continue
     kubectl -n argocd annotate applications.argoproj.io "$app" \
       argocd.argoproj.io/refresh=normal --overwrite >/dev/null 2>&1 || true
   done
@@ -313,6 +350,7 @@ yq --version
 echo "node image: $NODE_IMAGE"
 echo "gateway-api $GATEWAY_API_VERSION, cilium $CILIUM_VERSION," \
   "argo-cd chart $ARGOCD_FROM -> $ARGOCD_TO, bootstrap manager: $BOOTSTRAP_MANAGER"
+echo "REFRESH_SELF=$REFRESH_SELF GENERATE_PATHS=$GENERATE_PATHS WATCH_SECONDS=$WATCH_SECONDS"
 
 log "capacity check"
 kind get clusters 2>/dev/null || true
@@ -396,21 +434,40 @@ kapply -f "$split_dir/3-argocd-resources.yaml" | sed 's/^/  /'
 wait_apps "$REV_V1" 600
 apps_table
 
-log "phase 4: no OutOfSync loop - watch for 120s"
+# Longer than one reconcile period (120 s + up to 60 s jitter), with a hard
+# refresh in the middle: reconciledAt must move and no new sync may start.
+log "phase 4: no OutOfSync loop - watch for ${WATCH_SECONDS}s, hard refresh midway"
+reconciled() {
+  kubectl -n argocd get applications.argoproj.io -o json \
+    | jq -c '[.items[] | {n: .metadata.name, r: .status.reconciledAt}]'
+}
 history_before=$(kubectl -n argocd get applications.argoproj.io -o json \
   | jq -c '[.items[] | {n: .metadata.name, h: (.status.history // [] | length)}]')
+reconciled_before=$(reconciled)
 not_synced=0
-for _ in $(seq 1 12); do
-  sleep 10
+hard_refreshed=false
+watch_end=$((SECONDS + WATCH_SECONDS))
+while ((SECONDS < watch_end)); do
+  sleep 5
   n=$(kubectl -n argocd get applications.argoproj.io -o json \
     | jq '[.items[] | select(.status.sync.status != "Synced")] | length')
   not_synced=$((not_synced + n))
+  if [[ $hard_refreshed == false ]] && ((SECONDS > watch_end - WATCH_SECONDS / 2)); then
+    for app in "${APPS[@]}"; do
+      kubectl -n argocd annotate applications.argoproj.io "$app" \
+        argocd.argoproj.io/refresh=hard --overwrite >/dev/null
+    done
+    hard_refreshed=true
+    echo "hard refresh of all Applications at $(date +%H:%M:%S)"
+  fi
 done
+echo "reconciledAt before: $reconciled_before"
+echo "reconciledAt after:  $(reconciled)"
 history_after=$(kubectl -n argocd get applications.argoproj.io -o json \
   | jq -c '[.items[] | {n: .metadata.name, h: (.status.history // [] | length)}]')
 echo "sync history before: $history_before"
 echo "sync history after:  $history_after"
-echo "samples not Synced during the watch: $not_synced"
+echo "samples not Synced during the watch (every 5 s): $not_synced"
 [[ $history_before == "$history_after" ]] || echo "WARNING: new syncs during the watch"
 
 log "phase 4: adoption result"
@@ -497,6 +554,48 @@ crd_state httproutes.gateway.networking.k8s.io
 echo "  tracking-id: $(tracking_id crd/httproutes.gateway.networking.k8s.io)"
 echo "probe app sync status: $(kubectl -n argocd get applications.argoproj.io probe \
   -o jsonpath='{.status.sync.status}')"
+# The probe commit does not touch rendered/argocd: did the argocd Application
+# sync anyway, and for which resource?
+show_argocd_oos "$REV"
+kubectl -n argocd get applications.argoproj.io argocd -o json | jq -r '
+  "argocd app sync history: \(.status.history // [] | length) entries," +
+  " last at \((.status.history // [] | last | .revision // "-")[0:8])"'
+
+log "phase 5b: a CRD removed from git - pruned, orphaned or OutOfSync?"
+gateway_crds_in_app() {
+  kubectl -n argocd get applications.argoproj.io gateway-api-crds -o json | jq -r '
+    .status.resources[]? | select(.kind == "CustomResourceDefinition")
+    | "\(.name) \(.status)"' | sort
+}
+echo "CRDs in the gateway-api-crds Application (name status):"
+gateway_crds_in_app | sed 's/^/  /'
+echo "live Gateway API CRDs: $(kubectl get crd -o name | grep -c 'gateway\.networking\.k8s\.io$')"
+readonly DROPPED_CRD=grpcroutes.gateway.networking.k8s.io
+yq -i "del(select(.kind == \"CustomResourceDefinition\" and .metadata.name == \"$DROPPED_CRD\"))" \
+  "$RENDERED/gateway-api-crds/gateway-api-standard-install.yaml"
+git_commit_push "gateway CRDs: drop $DROPPED_CRD"
+refresh_apps
+# No wait_apps: an orphaned CRD leaves the Application Synced, a tracked one
+# is pruned (prune: true); both end Synced. Wait for the revision only.
+for _ in $(seq 1 60); do
+  [[ $(kubectl -n argocd get applications.argoproj.io gateway-api-crds \
+    -o jsonpath='{.status.sync.revision}') == "$REV" ]] && break
+  sleep 5
+done
+sleep 20
+kubectl -n argocd get applications.argoproj.io gateway-api-crds -o json | jq -r '
+  "gateway-api-crds: \(.status.sync.status) at \((.status.sync.revision // "-")[0:8])," +
+  " last operation \(.status.operationState.phase // "-")"'
+if kubectl get crd "$DROPPED_CRD" >/dev/null 2>&1; then
+  echo "crd/$DROPPED_CRD: still in the cluster (not pruned)"
+  echo "  in the Application: $(gateway_crds_in_app | grep "^$DROPPED_CRD " || echo no)"
+else
+  echo "crd/$DROPPED_CRD: deleted (pruned)"
+fi
+kubectl -n argocd get applications.argoproj.io gateway-api-crds -o json | jq -r '
+  (.status.operationState.syncResult.resources // [])[]
+  | select(.kind == "CustomResourceDefinition" and .status == "Pruned")
+  | "  sync result: \(.name) \(.status) \(.message)"'
 
 log "phase 6: value bump - Argo CD upgrades its own configuration"
 snapshot before-bump
@@ -508,6 +607,7 @@ start_avail_probe bump
 git_commit_push "argocd: controller.status.processors 20 -> 10"
 refresh_apps
 wait_apps "$REV" 600
+show_argocd_oos "$REV"
 wait_argocd_rollout
 sleep 10
 stop_avail_probe bump
@@ -533,6 +633,7 @@ start_avail_probe upgrade
 git_commit_push "argocd: chart $ARGOCD_FROM -> $ARGOCD_TO"
 refresh_apps
 wait_apps "$REV" 600
+show_argocd_oos "$REV"
 wait_argocd_rollout
 sleep 10
 stop_avail_probe upgrade
@@ -549,7 +650,7 @@ apps_table
 log "phase 8: what if Terraform re-applies the stale v1 files? (dry-run)"
 yq 'select(.kind == "Deployment" and .metadata.name == "argocd-server")' \
   "$WORK/rendered-v1/argocd/manifest.yaml" >"$WORK/stale-server.yaml"
-echo "- field manager 'kubectl' (Terraform default), no force-conflicts:"
+echo "- field manager 'kubectl' (alekc/kubectl kubectl_manifest default), no force-conflicts:"
 kubectl apply --server-side --dry-run=server --field-manager=kubectl \
   -f "$WORK/stale-server.yaml" 2>&1 | head -6 | sed 's/^/  /' || true
 echo "- field manager 'argocd-controller' (same as Argo CD):"
