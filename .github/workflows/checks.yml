@@ -1,12 +1,13 @@
 ---
-# Static checks of every pull request. OpenTofu plan stays local, and the
-# kind end-to-end job is deferred. Tools come from .mise/config.toml and
-# .mise/mise.lock, the same versions as on a laptop.
+# Static checks of every pull request and push to main. OpenTofu plan stays
+# local, and the kind end-to-end job is deferred. Tools come from
+# .mise/config.toml and .mise/mise.lock, the same versions as on a laptop.
 name: Checks
 
 on:
   pull_request:
-  # And main: a squash merge can break it while every pull request was green.
+  # And main, GitOps job only: a squash merge can break the rendered
+  # manifests while every pull request was green.
   push:
     branches: [main]
 

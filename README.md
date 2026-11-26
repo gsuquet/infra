@@ -31,9 +31,10 @@ clusters/<name>/           one Terraform root per cluster
 gitops/components/<name>/  component catalog: Helm source and default values
 gitops/clusters/<name>/    cluster.yaml and rendered/<component>/
 gitops/tenants/            one file per tenant
+docs/reference/            tooling reference (gitops-tooling.md)
 ```
 
-Each folder has a README. Work is tracked as GitHub issues.
+Each folder has a README.
 
 ## Usage
 
@@ -52,7 +53,9 @@ credentials and the first-apply bootstrap are described in
 `pre-commit run --all-files` runs the static checks. CI ([`checks.yml`](.github/workflows/checks.yml)) runs them
 on pull requests only, and the GitOps tasks (`manifests:check`, kubeconform, Conftest) on every pull request and
 push to main. `mise run
-cluster:up|plan|down <name>` is planned. `terraform plan` stays local.
+cluster:up|plan|down <name>` is planned. `tofu plan` stays local.
+
+Work is tracked as GitHub issues.
 
 ## License
 

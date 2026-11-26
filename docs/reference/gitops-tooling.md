@@ -170,4 +170,4 @@ a cluster needs.
 - `lint:shell`, `lint:actions`, `schemas:check`, `policy:test`,
   `manifests:check`, `manifests:validate`, `policy:check`.
 
-`terraform plan` stays local. A kind end-to-end job is deferred.
+`tofu plan` stays local. A kind end-to-end job is deferred.

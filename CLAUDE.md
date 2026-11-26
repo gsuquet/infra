@@ -23,7 +23,8 @@ Read [`README.md`](README.md) before structural changes.
 ## Rules for agents
 
 * Never run `pass-cli`, so never `mise run tf` or `mise run tf:read` (both call it).
-* Terraform is read-only for agents: `terraform init -backend=false` and `terraform validate` only. Never
+* OpenTofu is read-only for agents: `tofu init -backend=false` and `tofu validate` only (or
+  `pre-commit run terraform_validate --all-files`, which runs them with `--tf-path=tofu`). Never
   `apply`, `destroy`, `import`, `state` or anything that reads or writes remote state or calls Cloudflare.
 * Only exception: a throwaway local kind cluster for tests. `apply` and `destroy` (directly or through
   `mise run cluster:up|down`) are allowed on a kind cluster root with local state, no remote backend and no

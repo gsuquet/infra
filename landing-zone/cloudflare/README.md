@@ -20,7 +20,7 @@ No secret value is created by a resource of this configuration: such values woul
 ## Usage
 
 Credentials live in Proton Pass. `pass/*.env` hold only `pass://<vault>/<item>/<field>` references, which
-`pass-cli run` resolves into the environment of the Terraform process alone, masking them in its output.
+`pass-cli run` resolves into the environment of the OpenTofu process alone, masking them in its output.
 
 | Pass item (vault `Personal`) | Fields |
 |---|---|
