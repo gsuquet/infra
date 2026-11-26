@@ -52,7 +52,7 @@ credentials and the first-apply bootstrap are described in
 
 `pre-commit run --all-files` runs the static checks. CI ([`checks.yml`](.github/workflows/checks.yml)) runs them
 and the GitOps tasks (`manifests:check`, kubeconform, Conftest) on every pull request. `mise run
-cluster:up|plan|down <name>` is planned. `terraform plan` stays local.
+cluster:up|plan|down <name>` is planned. `tofu plan` stays local.
 
 Work is tracked as GitHub issues.
 
