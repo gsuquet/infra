@@ -6,6 +6,9 @@ name: Checks
 
 on:
   pull_request:
+  # And main: a squash merge can break it while every pull request was green.
+  push:
+    branches: [main]
 
 permissions: {}
 
