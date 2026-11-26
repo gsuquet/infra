@@ -1,3 +1,5 @@
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
@@ -29,6 +31,18 @@ repos:
     hooks:
       - id: commitlint
         stages: [commit-msg]
+        # Same as the hook's manifest. Stated here so that Renovate's
+        # pre-commit manager tracks additional_dependencies.
+        language: node
+        # Unpinned, nodeenv resolves "latest" to the first entry of the
+        # nodejs.org index, now a 27.0.0 alpha it cannot parse. Exact LTS pin
+        # (commitlint 21 needs node >=22.12), updated by Renovate.
+        # renovate: datasource=node-version depName=node
+        language_version: 26.13.1
+        # The hook's own commitlint --edit always reads .git/COMMIT_EDITMSG,
+        # but git passes other files (MERGE_MSG on git merge). Lint the file
+        # git passes.
+        pass_filenames: true
         additional_dependencies: ["@commitlint/config-conventional@21.2.4"]
 
   - repo: https://github.com/crate-ci/typos

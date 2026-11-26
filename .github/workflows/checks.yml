@@ -6,12 +6,19 @@ name: Checks
 
 on:
   pull_request:
+  # And main: a squash merge can break it while every pull request was green.
+  push:
+    branches: [main]
 
 permissions: {}
 
 concurrency:
-  group: checks-${{ github.ref }}
-  cancel-in-progress: true
+  # Pull requests: one group per PR, superseded runs cancelled.
+  # Main: one group per commit, so every commit gets a full run.
+  group: >-
+    checks-${{ github.event_name == 'pull_request'
+    && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   pre-commit:

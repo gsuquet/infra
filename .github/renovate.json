@@ -17,6 +17,17 @@
         "compatible_with\\s*\\{\\s*opentofu\\s*=\\s*\"(?<currentValue>[^\"]+)\""
       ],
       "packageNameTemplate": "opentofu/opentofu"
+    },
+    {
+      "customType": "regex",
+      "description": "pre-commit hooks pin language_version under a '# renovate:' marker; the pre-commit manager does not read it",
+      "managerFilePatterns": [
+        "/(^|/)\\.pre-commit-config\\.yaml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+language_version: (?<currentValue>\\S+)"
+      ],
+      "versioningTemplate": "node"
     }
   ],
   "description": "Renovate config for the infra repo. Every dependency is pinned exactly (versions, commit SHAs with '# frozen: <tag>'). Nothing merges itself: no CI is a required status check yet.",
@@ -55,7 +66,8 @@
       "matchManagers": [
         "mise",
         "pre-commit",
-        "github-actions"
+        "github-actions",
+        "custom.regex"
       ],
       "semanticCommitScope": "tools"
     },
