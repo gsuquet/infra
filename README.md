@@ -50,7 +50,8 @@ credentials and the first-apply bootstrap are described in
 [`landing-zone/cloudflare/README.md`](landing-zone/cloudflare/README.md).
 
 `pre-commit run --all-files` runs the static checks. CI ([`checks.yml`](.github/workflows/checks.yml)) runs them
-and the GitOps tasks (`manifests:check`, kubeconform, Conftest) on every pull request. `mise run
+on pull requests only, and the GitOps tasks (`manifests:check`, kubeconform, Conftest) on every pull request and
+push to main. `mise run
 cluster:up|plan|down <name>` is planned. `terraform plan` stays local.
 
 ## License
