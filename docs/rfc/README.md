@@ -25,10 +25,10 @@ Every structural decision starts here as an RFC, reviewed in a pull request
 | [0017](0017-repository-layout.md) | Organise infra by landing zones, modules, clusters, gitops | accepted |
 | [0018](0018-terraform-state-backends.md) | Keep kind state local and other cluster states in R2 | accepted |
 | [0019](0019-lifecycle-tasks-and-ci-scope.md) | Drive lifecycles with mise tasks and keep CI static | accepted |
-| 0020 | Secrets backend | review, [#4](https://github.com/gsuquet/infra/pull/4) |
-| 0021 | Kargo tenant promotion | review, [#8](https://github.com/gsuquet/infra/pull/8) |
-| 0022 | IaC tool | accepted, lands with [#11](https://github.com/gsuquet/infra/pull/11) |
-| 0023 | Renovate with rendered manifests | review, [#6](https://github.com/gsuquet/infra/pull/6) |
-| 0024 | GKE | review, [#7](https://github.com/gsuquet/infra/pull/7) |
-| 0025 | Talos on Raspberry Pi | review, [#9](https://github.com/gsuquet/infra/pull/9) |
-| 0026 | Cloudflare Tunnel | review, [#10](https://github.com/gsuquet/infra/pull/10) |
+| 0020 | Back the ESO store secrets with GCP Secret Manager | draft, [#4](https://github.com/gsuquet/infra/pull/4) |
+| 0021 | Promote tenant releases with one standalone Kargo | draft, [#8](https://github.com/gsuquet/infra/pull/8) |
+| 0022 | Use OpenTofu as the IaC tool | accepted, lands with [#11](https://github.com/gsuquet/infra/pull/11) |
+| 0023 | Re-render manifests in Renovate's own commit | draft, [#6](https://github.com/gsuquet/infra/pull/6) |
+| 0024 | Run GKE Standard zonal with Dataplane V2 as the cloud target | draft, [#7](https://github.com/gsuquet/infra/pull/7) |
+| 0025 | Build Talos clusters on Raspberry Pis with cluster-talos | draft, [#9](https://github.com/gsuquet/infra/pull/9) |
+| 0026 | Expose each cluster through its own Cloudflare Tunnel | draft, [#10](https://github.com/gsuquet/infra/pull/10) |
