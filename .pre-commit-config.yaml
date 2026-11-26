@@ -29,6 +29,12 @@ repos:
     hooks:
       - id: commitlint
         stages: [commit-msg]
+        # Unpinned, nodeenv resolves "latest" to the first entry of the
+        # nodejs.org index, now a 27.0.0 alpha it cannot parse. Exact LTS pin.
+        language_version: 24.22.0
+        # The hook's own `commitlint --edit` always reads .git/COMMIT_EDITMSG,
+        # which a merge commit never writes. Lint the file git passes instead.
+        pass_filenames: true
         additional_dependencies: ["@commitlint/config-conventional@21.2.4"]
 
   - repo: https://github.com/crate-ci/typos
