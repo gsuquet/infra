@@ -26,7 +26,7 @@ What the GitOps mise tasks do, step by step, and the files and rules they enforc
 
 ```mermaid
 flowchart TB
-    a["helm dependency build<br/>from the committed Chart.lock"] --> b["helm template component sources/<br/>--namespace --kube-version --api-versions<br/>--include-crds --skip-tests"]
+    a["helm dependency build<br/>from Chart.lock"] --> b["helm template"]
     b --> c["split: one file per resource"]
     c --> d["CRDs: sync-wave -1"]
     d --> e[("rendered/component/")]
@@ -36,7 +36,8 @@ flowchart TB
 
 | Step | Rule |
 | --- | --- |
-| Dependencies | `helm dependency build`, never `dependency update` (which re-resolves versions); HTTP repositories go to a throwaway repository file, not your `helm repo list` |
+| Dependencies | `helm dependency build` from the committed `Chart.lock`, never `dependency update` (which re-resolves versions); HTTP repositories go to a throwaway repository file, not your `helm repo list` |
+| Template | `helm template <component> sources/` with `--namespace`, `--kube-version`, `--api-versions`, `--include-crds` and `--skip-tests` |
 | Values, last wins | 1. `sources/values.yaml`; 2. `components[].values` of `cluster.yaml`; 3. the injected `gitops` key, last so no override can fake it |
 | `gitops.cluster` | `name`, `target`, `kubernetesVersion`, `components` (`name` and `namespace` of each enabled component, for Argo CD Applications) |
 | `gitops.tenants` | each tenant of the cluster, keyed by name, with the content of its tenant file |

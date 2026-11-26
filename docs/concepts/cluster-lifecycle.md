@@ -1,57 +1,43 @@
 # Cluster lifecycle
 
+<!-- readability: allow-code R2 -->
+
 A cluster is created and destroyed by one IaC root, then run by its own Argo CD. Understand the hand-over between
 the two to know what a `plan` can change and what only a pull request to `rendered/` can.
 
 ## How it works
 
-The lifecycle tasks (`mise run cluster:up|plan|down <name>`) are planned; the flow below is the target.
+The lifecycle tasks (`mise run cluster:up|plan|down <name>`) are planned; the flow below is the target of
+`cluster:up`.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Owner
-    participant Mise as mise task
+    participant State as State (local or R2)
     participant Root as clusters/name (IaC root)
-    participant State as State (kind: local, others: R2)
     participant K8s as Cluster
     participant Argo as Argo CD
-    participant Git as gitops/clusters/name/rendered
+    participant Git as rendered/
 
-    Owner->>Mise: cluster:plan name
-    Mise->>Root: plan (local only, never in CI)
-    Owner->>Mise: cluster:up name
-    Mise->>Root: init + apply
+    Owner->>Root: cluster:up name
     Root->>State: lock and write state
-    Root->>K8s: cluster-kind, cluster-talos or cluster-gke
-    Root->>K8s: bootstrap-gateway-api from rendered/gateway-api-crds (not GKE)
-    Root->>K8s: bootstrap-cilium from rendered/cilium (not GKE)
-    Root->>K8s: bootstrap-argocd from rendered/argocd + root Application
+    Root->>K8s: create the cluster
+    Root->>K8s: apply Gateway API CRDs, then Cilium (not GKE)
+    Root->>K8s: apply Argo CD and its root Application
     Argo->>Git: sync
-    Argo->>K8s: adopt bootstrap resources (same files, no diff)
+    Argo->>K8s: adopt the bootstrap resources (no diff)
     Argo->>K8s: install every other component and tenant
-    Note over Root,Argo: From here Argo CD owns every in-cluster resource
-    Owner->>Mise: cluster:down name
-    Mise->>Root: destroy, in the order cluster:down documents
 ```
 
-*IaC installs four things from the same rendered files Argo CD later adopts; Argo CD owns everything after.*
+*IaC bootstraps from the same rendered files Argo CD later adopts; from then on Argo CD owns every in-cluster
+resource.*
 
-| Phase | Owner | Source |
-| --- | --- | --- |
-| Cluster | IaC root, `cluster-*` module | module inputs |
-| Gateway API CRDs (kind, Talos) | IaC once, then Argo CD | `rendered/gateway-api-crds/` |
-| Cilium (kind, Talos) | IaC once, then Argo CD | `rendered/cilium/` |
-| Argo CD and its root `Application` | IaC once, then Argo CD itself | `rendered/argocd/` |
-| Everything else | Argo CD | `rendered/<component>/`, tenant folders in `gsuquet/gitops` |
+`cluster:plan` plans the root locally, never in CI. `cluster:down` destroys it, in the order it documents.
 
-| Target | Cluster module | State |
-| --- | --- | --- |
-| kind | `cluster-kind` | local, no remote backend |
-| Talos | `cluster-talos` | R2 |
-| GKE | `cluster-gke` | R2 |
-
-*Module inputs, bucket, state keys and locking: [Terraform roots and modules](../reference/terraform-modules.md).*
+Cluster and bootstrap modules, rendered paths and state per target:
+[Terraform roots and modules](../reference/terraform-modules.md). Tenant manifests come from tenant folders in
+`gsuquet/gitops`.
 
 ## Why it works this way
 
@@ -65,8 +51,6 @@ sequenceDiagram
 | kind must work offline and without secrets | kind state is local and lost with the machine | [ADR-0018](../adr/0018-terraform-state-backends.md) |
 | One backend for all long-lived state | R2; it has no object versioning, so a corrupted state cannot be restored from the bucket; GKE state lives outside Google Cloud | [ADR-0018](../adr/0018-terraform-state-backends.md) |
 | CI must hold no secret and touch no state | `plan` stays local: the author pastes the relevant output in the pull request | [ADR-0019](../adr/0019-lifecycle-tasks-and-ci-scope.md) |
-
-Deferred: a kind end-to-end CI job (create, bootstrap, wait for Argo CD healthy).
 
 ## Related
 

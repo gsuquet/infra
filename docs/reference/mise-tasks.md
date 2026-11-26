@@ -2,17 +2,17 @@
 
 Every `mise run` task of the repository, existing and planned. Source of truth: `.mise/tasks/`; `mise tasks`
 generates the list of existing ones with their descriptions. This page is written by hand because it also lists
-planned and referenced tasks that `mise tasks` cannot show. Tool versions are pinned in `.mise/config.toml` and `.mise/mise.lock`.
+planned tasks, which `mise tasks` cannot show. Tool versions are pinned in `.mise/config.toml` and `.mise/mise.lock`.
 
 ```mermaid
 flowchart LR
-    render[manifests:render] --> check[manifests:check]
-    render --> validate[manifests:validate]
-    render --> pcheck[policy:check]
+    render[manifests:render] --> rendered[(rendered/)]
+    rendered --> check[manifests:check]
+    rendered --> validate[manifests:validate]
+    rendered --> pcheck[policy:check]
     ptest[policy:test]
     schemas[schemas:check]
-    up[cluster:up] -.reads.-> rendered[(rendered/)]
-    render --> rendered
+    rendered -. read by .-> up[cluster:up]
 ```
 
 *Every GitOps check reads the output of `manifests:render`; `cluster:up` bootstraps from the same output.*
@@ -55,8 +55,9 @@ Run in `landing-zone/cloudflare/` with credentials resolved by `pass-cli run` fo
 | --- | --- | --- | --- |
 | `tf` | IaC arguments | exists | the pinned IaC binary with the write token and the R2 state credentials |
 | `tf:read` | IaC arguments | exists | the pinned IaC binary with the read-only token; use with `plan -lock=false` |
-| `cf:ids` | `<domain>` | referenced, not in `.mise/tasks/` | lists the IDs of an existing zone, for `imports.tf` |
-| `cf:zt-ids` | none | referenced, not in `.mise/tasks/` | lists the IDs of existing Zero Trust resources, for `imports.tf` |
+
+`cf:ids` and `cf:zt-ids`, which [landing-zone/cloudflare/README.md](../../landing-zone/cloudflare/README.md) names, do
+not exist in `.mise/tasks/`.
 
 Related: [GitOps tooling](gitops-tooling.md), [Cluster lifecycle](../concepts/cluster-lifecycle.md),
 [Cloudflare landing zone](../../landing-zone/cloudflare/README.md).

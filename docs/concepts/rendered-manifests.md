@@ -40,10 +40,11 @@ Argo CD applies each `rendered/` folder in sync waves:
 
 ```mermaid
 flowchart LR
-    w1["Wave -1<br/>CustomResourceDefinitions<br/>(the render sets it)"] --> w0["Wave 0<br/>ordinary resources"] --> w2["Wave 1 and higher<br/>child Applications"]
+    w1["Wave -1<br/>CustomResourceDefinitions"] --> w0["Wave 0<br/>ordinary resources"] --> w2["Wave 1 and higher<br/>child Applications"]
 ```
 
-*CRDs exist before any custom resource; child Applications sync after the resources of their parent.*
+*The render sets wave -1 on every CRD, so CRDs exist before any custom resource; child
+Applications sync after the resources of their parent.*
 
 The same model holds for tenants: Kargo renders tenant manifests into `gsuquet/gitops` under
 `tenants/<tenant>/<cluster>/`, and the cluster's Argo CD applies them as plain YAML.
@@ -58,12 +59,13 @@ hooks never render.
 | Resource | Rendered by | Decision |
 | --- | --- | --- |
 | Cluster-wide default deny, platform network policies | `network-policy` baseline component, every cluster | decided 2026-11-19, ADR pending |
-| Platform `Namespace` manifests, with the policy and Pod Security labels | render-emitted cluster layer `rendered/platform/` | [ADR-0010](../adr/0010-cluster-owned-default-deny-network-policy.md) |
-| Tenant onboarding: namespaces, `AppProject`, `ResourceQuota`, `LimitRange`, `SecretStore`, `Application` | render-emitted cluster layer `rendered/platform/` | [ADR-0009](../adr/0009-tenant-onboarding-by-infra.md), [ADR-0010](../adr/0010-cluster-owned-default-deny-network-policy.md) |
+| Platform `Namespace` manifests, with the policy and Pod Security labels | open | [ADR-0010](../adr/0010-cluster-owned-default-deny-network-policy.md) |
+| Tenant onboarding: namespaces, `AppProject`, `ResourceQuota`, `LimitRange`, `SecretStore`, `Application` | open | [ADR-0009](../adr/0009-tenant-onboarding-by-infra.md), [ADR-0010](../adr/0010-cluster-owned-default-deny-network-policy.md) |
 
-The `network-policy` component replaces only the policy part of the `rendered/platform/` layer. The render does not
-emit that layer yet, and `platform` stays a reserved name. Open: whether platform Namespaces and tenant onboarding
-stay in that layer or move to a component, pending an RFC.
+Open, pending an RFC: where platform Namespaces and tenant onboarding render. The 2026-11-18 decision put them in a
+render-emitted `rendered/platform/` layer, which the render does not emit yet; `platform` stays a reserved name. The
+alternative is a `tenant` component, as `schemas/tenant.schema.json` describes, fed by `gitops.tenants`. The
+`network-policy` component replaces only the policy part of that layer.
 
 ## Why it works this way
 

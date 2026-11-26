@@ -1,50 +1,12 @@
 # Docs
 
-The documentation of `infra`, by reader need ([Diataxis](https://diataxis.fr/)): pick the box that matches what
-you want to do.
-
-```mermaid
-flowchart LR
-    reader([You want to])
-    reader -->|understand| concepts
-    reader -->|do a task| howto
-    reader -->|look up a fact| reference
-    reader -->|learn by doing| tutorials
-    reader -->|know why| decisions
-
-    subgraph concepts[Concepts]
-        c1[Platform overview]
-        c2[Cluster lifecycle]
-        c3[Rendered manifests]
-        c4[Tenant isolation]
-        c5[Repository layout]
-    end
-    subgraph howto[How-to]
-        h1[Render manifests]
-        h2[Add a component]
-        h3[Onboard a tenant]
-    end
-    subgraph reference[Reference]
-        r1[GitOps tooling]
-        r2[GitOps files]
-        r3[mise tasks]
-        r4[Terraform roots and modules]
-    end
-    subgraph tutorials[Tutorials]
-        t1[First kind cluster - planned]
-    end
-    subgraph decisions[Decisions]
-        d1[RFCs]
-        d2[ADRs]
-    end
-```
-
-*Each box is one folder of `docs/`; each node is one page below.*
+The documentation of `infra`, by reader need ([Diataxis](https://diataxis.fr/)): pick the row that matches
+what you want to do.
 
 | Type | Page | Read it to |
 | --- | --- | --- |
 | Concept | [Platform overview](concepts/platform-overview.md) | see every part of the platform and how they connect |
-| Concept | [Cluster lifecycle](concepts/cluster-lifecycle.md) | follow a cluster from `cluster:up` to `cluster:down` |
+| Concept | [Cluster lifecycle](concepts/cluster-lifecycle.md) | follow a cluster from `cluster:up` to Argo CD, and how `cluster:plan` and `cluster:down` fit |
 | Concept | [Rendered manifests](concepts/rendered-manifests.md) | understand the path from a chart to the cluster, and sync waves |
 | Concept | [Tenant isolation](concepts/tenant-isolation.md) | understand what a tenant can and cannot do |
 | Concept | [Repository layout](concepts/repository-layout.md) | find where each kind of file lives |

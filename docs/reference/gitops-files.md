@@ -80,6 +80,19 @@ Schema: `schemas/component.schema.json`. No other field is allowed.
 | `baseline` | boolean, required | none | `true`: every cluster whose target is in `targets` must enable it |
 | `targets` | list of enums, required | none | `kind`, `talos`, `gke`, at least one, unique; `schemas:check` fails if another target enables it |
 
+### Baseline components
+
+Every cluster enables these, when they support its [target](terraform-modules.md#targets), which says what GKE provides itself.
+
+| Component | kind | Talos | GKE |
+| --- | --- | --- | --- |
+| `gateway-api-crds` | yes | yes | no |
+| `cilium` | yes | yes | no |
+| `argocd` | yes | yes | yes |
+| `cert-manager` | yes | yes | yes |
+| `external-secrets` | yes | yes | yes |
+| `network-policy` | yes | yes | yes |
+
 ## Tenant: `gitops/tenants/<tenant>.yaml`
 
 A tenant that clusters can onboard. Schema: `schemas/tenant.schema.json`. No other field is allowed.

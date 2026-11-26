@@ -58,5 +58,6 @@ Expected last line: `[INFO] The rendered manifests are up to date`.
 
 ## Related
 
-- [Rendered manifests](../concepts/rendered-manifests.md), [Platform overview](../concepts/platform-overview.md#baseline-components)
+- [Rendered manifests](../concepts/rendered-manifests.md),
+  [Baseline components](../reference/gitops-files.md#baseline-components)
 - [GitOps tooling reference](../reference/gitops-tooling.md)

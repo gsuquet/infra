@@ -27,7 +27,8 @@ Give a tenant namespaces, a quota and a sync source on one or more clusters, thr
 
 4. Render and review: follow [How to render manifests](render-manifests.md). The diff shows, per namespace, a
    `Namespace`, a `ResourceQuota`, a `LimitRange` and a `SecretStore` named `secrets`, plus one `AppProject` and
-   one `Application` per cluster.
+   one `Application` per cluster (untested: the render
+   [does not emit them yet](../concepts/rendered-manifests.md#where-policy-and-tenant-resources-come-from)).
 
 5. (planned) Create `tenants/<tenant>/<cluster>/` in `gsuquet/gitops` and the tenant's Kargo promotion with
    git-only steps; the `Application` syncs that folder after merge.

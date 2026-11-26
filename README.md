@@ -8,14 +8,14 @@ cluster until a Talos cluster from this repository replaces it.
 ```mermaid
 flowchart LR
     lz[Cloudflare landing zone] --> cf[(Cloudflare)]
-    root[Cluster root<br/>OpenTofu] -->|cluster, Gateway API CRDs,<br/>Cilium, Argo CD| k8s[kind / Talos / GKE]
+    root[Cluster root<br/>OpenTofu] -->|cluster, CRDs,<br/>Cilium, Argo CD| k8s[kind / Talos / GKE]
     catalog[Catalog + cluster.yaml] -->|render| rendered[rendered/]
     rendered -->|sync| argo[Argo CD] --> k8s
     gitops[(gsuquet/gitops<br/>tenant manifests)] -->|sync| argo
     k8s -->|Cloudflare Tunnel| cf
 ```
 
-*IaC builds and bootstraps each cluster; Argo CD runs everything else from rendered manifests.*
+*IaC builds and bootstraps each cluster, Gateway API CRDs included; Argo CD runs everything else from rendered manifests.*
 
 > Which IaC binary the commands run today: [IaC tool](docs/reference/terraform-modules.md#iac-tool).
 
@@ -32,7 +32,7 @@ pre-commit install --hook-type commit-msg
 mise run manifests:check
 ```
 
-`[INFO] The rendered manifests are up to date`.
+The last command prints `[INFO] The rendered manifests are up to date`.
 
 ## Usage
 

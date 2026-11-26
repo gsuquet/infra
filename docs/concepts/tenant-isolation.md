@@ -9,10 +9,9 @@ Onboarding: the platform declares the tenant, the render produces its guard rail
 
 ```mermaid
 flowchart LR
-    tfile[gitops/tenants/tenant.yaml<br/>namespaces, quota, limits]
-    cy[cluster.yaml<br/>tenants: list]
+    src[tenant.yaml<br/>and cluster.yaml]
     render[[manifests:render]]
-    subgraph rendered[rendered on each cluster that lists the tenant]
+    subgraph rendered[on each cluster listing the tenant]
         ns[Namespaces<br/>policy label + Pod Security restricted]
         ap[AppProject]
         q[ResourceQuota + LimitRange]
@@ -23,8 +22,7 @@ flowchart LR
     kargo[Kargo<br/>git-only steps]
     code[Tenant app repo]
 
-    tfile --> render
-    cy --> render
+    src --> render
     render --> ns & ap & q & ss & app
     code --> kargo -->|pull request| gitops
     app -->|syncs| gitops
@@ -37,13 +35,13 @@ Isolation: four layers stop a tenant from reaching outside its namespaces.
 ```mermaid
 flowchart TB
     t([Tenant manifest]) --> l1{AppProject}
-    l1 -->|cluster-scoped resource, NetworkPolicy,<br/>CiliumNetworkPolicy, other repo or namespace| x1[Rejected by Argo CD]
+    l1 -->|forbidden resource, repo<br/>or namespace| x1[Rejected by Argo CD]
     l1 --> l2{Pod Security restricted}
-    l2 -->|privileged, hostNetwork, hostPID,<br/>hostPath, root, extra capabilities| x2[Rejected by admission]
+    l2 -->|host access, root<br/>or capabilities| x2[Rejected by admission]
     l2 --> l3{ResourceQuota + LimitRange}
     l3 -->|over quota| x3[Rejected by admission]
     l3 --> l4[Running pod]
-    l4 --> np[network-policy default deny<br/>ingress and egress, except kube-dns and API server]
+    l4 --> np[network-policy<br/>default deny]
 ```
 
 *Argo CD, admission and the default deny each close a different escape.*
@@ -51,7 +49,7 @@ flowchart TB
 | Layer | Rule |
 | --- | --- |
 | `AppProject` | `sourceRepos` only `gsuquet/gitops`; destinations only the tenant namespaces on `in-cluster`; empty `clusterResourceWhitelist`; `namespaceResourceBlacklist` holds `NetworkPolicy` and `CiliumNetworkPolicy` |
-| Pod Security | tenant namespaces `restricted`; `baseline` only through an `infra` pull request; never `privileged` |
+| Pod Security | tenant namespaces `restricted`: no privileged, `hostNetwork`, `hostPID`, `hostPath`, root or extra capabilities; `baseline` only through an `infra` pull request; never `privileged` |
 | Quota | `ResourceQuota` and `LimitRange` per namespace, from the tenant file; they protect shared hardware such as Raspberry Pis |
 | Network | `network-policy` component: one `CiliumClusterwideNetworkPolicy` selects endpoints in namespaces labelled `network.infra.gsuquet.com/policy: default-deny` and denies ingress and egress; baseline allows egress to kube-dns and the API server |
 | Secrets | one `SecretStore` named `secrets` per namespace, rendered by the platform |
@@ -76,7 +74,7 @@ default deny.
 
 | Open item | Status |
 | --- | --- |
-| Which part renders platform Namespaces and tenant onboarding: the `rendered/platform/` layer (ADR-0010) or a component, now that `network-policy` holds the policies | open, pending an RFC |
+| Which part renders platform Namespaces and tenant onboarding: see [where policy and tenant resources come from](rendered-manifests.md#where-policy-and-tenant-resources-come-from) | open, pending an RFC |
 | Tenant allow rules (ingress from a Gateway, egress to a database or external service) | deferred, likely in the tenant file |
 | `ValidatingAdmissionPolicy` rejecting a `Namespace` without the policy and Pod Security labels | deferred |
 | `SecretStore` in the tenant blacklist: a tenant could ship its own store named `secrets` | risk, pending the owner's decision |

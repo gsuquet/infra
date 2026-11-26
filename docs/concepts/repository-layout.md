@@ -7,20 +7,21 @@ Knowing the split tells you where a change goes and which tool reads it.
 
 ```mermaid
 flowchart TB
-    repo[infra]
-    repo --> lz[landing-zone/<br/>one IaC root per provider account]
-    repo --> mod[modules/<br/>every IaC child module]
-    repo --> cl[clusters/name/<br/>one IaC root per cluster]
-    repo --> go[gitops/]
-    repo --> docs[docs/<br/>concepts, how-to, reference,<br/>tutorials, runbooks, rfc, adr]
-    lz --> lzcf[cloudflare/]
-    lz --> lzgcp[gcp/ - planned]
-    go --> gocomp[components/name/<br/>catalog]
-    go --> gocl[clusters/name/<br/>cluster.yaml + rendered/]
-    go --> got[tenants/tenant.yaml]
-    lzcf -. calls .-> mod
+    subgraph iac[IaC]
+        lz[landing-zone/cloudflare/<br/>account root]
+        cl[clusters/name/<br/>cluster root]
+        mod[modules/<br/>child modules]
+    end
+    subgraph go[gitops/]
+        gocomp[components/name/<br/>catalog]
+        got[tenants/tenant.yaml]
+        gocl[clusters/name/<br/>cluster.yaml + rendered/]
+    end
+    lz -. calls .-> mod
     cl -. calls .-> mod
     cl == same name ==> gocl
+    gocomp --> gocl
+    got --> gocl
 ```
 
 *Roots call modules; a cluster has the same name in `clusters/` and `gitops/clusters/`.*
