@@ -185,7 +185,7 @@ jspm_packages/
 .yarn/install-state.gz
 .pnp.*
 
-### Terraform ###
+### Terraform / OpenTofu ###
 **/.terraform/
 *.tfstate
 *.tfstate.*
@@ -197,8 +197,12 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+override.tofu
+*_override.tofu
 .terraformrc
 terraform.rc
+.tofurc
+tofu.rc
 *.tfplan
 local.auto.tfvars
 # Child modules do not pin providers: the root module's lock file does.

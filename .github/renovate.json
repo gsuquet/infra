@@ -5,6 +5,21 @@
   "customManagers": [
     {
       "customType": "regex",
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "opentofu",
+      "description": "OpenTofu CLI pin in language.compatible_with: the terraform manager does not read the language block",
+      "extractVersionTemplate": "^v(?<version>\\S+)$",
+      "managerFilePatterns": [
+        "**/*.tf",
+        "**/*.tofu"
+      ],
+      "matchStrings": [
+        "compatible_with\\s*\\{\\s*opentofu\\s*=\\s*\"(?<currentValue>[^\"]+)\""
+      ],
+      "packageNameTemplate": "opentofu/opentofu"
+    },
+    {
+      "customType": "regex",
       "description": "pre-commit hooks pin language_version under a '# renovate:' marker; the pre-commit manager does not read it",
       "managerFilePatterns": [
         "/(^|/)\\.pre-commit-config\\.yaml$/"
@@ -57,19 +72,19 @@
       "semanticCommitScope": "tools"
     },
     {
-      "description": "Terraform CLI: the mise tool and every required_version move together (exact pins must match)",
-      "groupName": "terraform cli",
-      "groupSlug": "terraform-cli",
+      "description": "OpenTofu CLI: the mise tool and every language.compatible_with pin move together (exact pins must match)",
+      "groupName": "opentofu cli",
+      "groupSlug": "opentofu-cli",
       "matchPackageNames": [
-        "terraform",
-        "hashicorp/terraform"
+        "opentofu",
+        "opentofu/opentofu"
       ],
-      "semanticCommitScope": "terraform"
+      "semanticCommitScope": "opentofu"
     },
     {
-      "description": "Terraform providers: root and child modules pin the same exact version, so one PR updates them all; review the plan before merging",
-      "groupName": "terraform providers",
-      "groupSlug": "terraform-providers",
+      "description": "OpenTofu providers: root and child modules pin the same exact version, so one PR updates them all; review the plan before merging",
+      "groupName": "opentofu providers",
+      "groupSlug": "opentofu-providers",
       "matchDepTypes": [
         "provider",
         "required_provider"
@@ -77,7 +92,17 @@
       "matchManagers": [
         "terraform"
       ],
-      "semanticCommitScope": "terraform"
+      "semanticCommitScope": "opentofu"
+    },
+    {
+      "description": "Look providers and modules up in the OpenTofu registry, the one tofu init uses and the lock files name",
+      "matchDatasources": [
+        "terraform-module",
+        "terraform-provider"
+      ],
+      "registryUrls": [
+        "https://registry.opentofu.org"
+      ]
     },
     {
       "description": "Lock file maintenance PRs use the lock scope",
