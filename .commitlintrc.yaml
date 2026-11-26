@@ -1,0 +1,5 @@
+---
+# Rules for the commitlint pre-commit hook (commit-msg stage). The preset is
+# installed by the hook's additional_dependencies in .pre-commit-config.yaml.
+extends:
+  - "@commitlint/config-conventional"
