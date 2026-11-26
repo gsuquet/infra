@@ -10,7 +10,8 @@ review: https://github.com/gsuquet/infra/pull/5
 # 0003. Use kind, Talos and GKE as distributions per target
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of running one GitOps catalog on developer machines, owned hardware and a cloud, facing different constraints per target, we decided for kind on developer machines (a kind provider chosen in `cluster-kind`), Talos Linux on Raspberry Pis and local servers (`siderolabs/talos` provider, API only, no SSH, no Ansible) and managed GKE in the cloud (`hashicorp/google`; `cluster-gke` takes Spot pools, on-demand pools or both, per cluster, by input, and always creates the cluster with Dataplane V2 and `enableCiliumClusterwideNetworkPolicy: true`), with exactly one `cluster-*` module per target, and against k3s installed by Ansible and kubeadm with self-managed cloud VMs, to achieve immutable API-driven hardware, no cloud control plane to operate and a disposable local copy of the catalog, accepting three code paths that differ in CNI, storage and load balancing.
+- Context: running one GitOps catalog on developer machines, owned hardware and a cloud, facing different constraints per target.
+- Decision: we decided for kind on developer machines (a kind provider chosen in `cluster-kind`), Talos Linux on Raspberry Pis and local servers (`siderolabs/talos` provider, API only, no SSH, no Ansible) and managed GKE in the cloud (`hashicorp/google`; `cluster-gke` takes Spot pools, on-demand pools or both, per cluster, by input, and always creates the cluster with Dataplane V2 and `enableCiliumClusterwideNetworkPolicy: true`), with exactly one `cluster-*` module per target, and against k3s installed by Ansible and kubeadm with self-managed cloud VMs, to achieve immutable API-driven hardware, no cloud control plane to operate and a disposable local copy of the catalog, accepting three code paths that differ in CNI, storage and load balancing.
 - Consequences:
   - Good: Talos is configured only through its API: machine configs are rendered by IaC, no SSH, no Ansible.
   - Good: GKE removes control plane operations; kind gives a disposable cluster to test the same catalog.
@@ -25,3 +26,5 @@ review: https://github.com/gsuquet/infra/pull/5
 - Revisit when: a cloud other than GKE is needed, or Talos stops supporting the Raspberry Pi models in use.
 
 Source: [RFC 0003](../../docs/rfc/0003-cluster-distribution-per-target.md), reviewed in https://github.com/gsuquet/infra/pull/5.
+
+<!-- readability: allow-code V2 -->

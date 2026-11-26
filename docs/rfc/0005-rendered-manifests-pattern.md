@@ -22,6 +22,13 @@ A render task turns every Helm source into plain YAML, committed to Git, one fil
 those files as a directory source, ordered by sync waves. The same pattern holds for cluster components here
 and for tenant manifests in `gsuquet/gitops`.
 
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Commit rendered manifests, one file per resource, for platform and tenants; Argo CD applies them as plain directories | Review and static checks see the real output | Large diffs, and a render commit for every source change | yes, revert the commit; Argo CD syncs the previous files |
+| Keep renders deterministic, with no value generated at template time | A public repository must not publish generated secret material | Component values set these options explicitly | yes, revert the commit; Argo CD syncs the previous files |
+| Keep Helm hooks and let Argo CD map them | Argo CD maps `helm.sh/hook` to its own hooks | `pre-install` hooks run on every sync | yes, revert the commit; Argo CD syncs the previous files |
+| Order syncs with waves: CRDs `-1`, resources `0`, child `Application` `1` or higher | CRDs apply before the resources that use them | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) | yes, revert the commit; Argo CD syncs the previous files |
+
 ## Context
 
 - Most components ship as Helm charts.
@@ -81,7 +88,7 @@ Apply charts by hand or by IaC.
 
 ```mermaid
 flowchart LR
-    S["gitops/components/{name}/ + cluster.yaml"] --> R["mise run manifests:render: helm template, hooks kept"]
+    S["gitops/components/{name}/ + cluster.yaml"] --> R["mise run manifests:render: helm template"]
     R --> F["gitops/clusters/{name}/rendered/{component}/, one file per resource"]
     F --> PR["pull request: manifests:check, kubeconform, Conftest, betterleaks"]
     PR --> A["Argo CD: directory source, no Helm"]
@@ -115,10 +122,12 @@ From chart to cluster: the render output is what reviewers, checks and Argo CD a
 
 ## Drawbacks and risks
 
-- A chart that renders secret material at template time would publish it and make `manifests:check` fail on every run -> component values avoid template-time generation explicitly.
-- A source change without a render leaves stale files -> `manifests:check` in CI fails on any difference (RFC 0019), so Renovate chart bumps need a render commit.
-- Argo CD's hook mapping is annotation compatibility, not Helm's lifecycle: it cannot tell an install from an upgrade, so `pre-install` hooks run on every sync -> components disable such hooks or render with `--no-hooks`.
-- Upgrades produce large diffs -> one file per resource keeps diffs readable.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| A chart that renders secret material at template time would publish it and make `manifests:check` fail on every run | high | component values avoid template-time generation explicitly. |
+| A source change without a render leaves stale files | medium | `manifests:check` in CI fails on any difference (RFC 0019), so Renovate chart bumps need a render commit. |
+| Argo CD's hook mapping is annotation compatibility, not Helm's lifecycle: it cannot tell an install from an upgrade, so `pre-install` hooks run on every sync | medium | components disable such hooks or render with `--no-hooks`. |
+| Upgrades produce large diffs | low | one file per resource keeps diffs readable. |
 
 ## Open questions
 
@@ -127,7 +136,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of delivering Helm-sourced components and tenant manifests through Argo CD, facing resources that are invisible in review when rendered at sync time, we decided for manifests rendered by `mise run manifests:render` into `gitops/clusters/<name>/rendered/<component>/` (one file per resource; deterministic: no template-time generated values, certificates from cert-manager or in-cluster generators, credentials from the `secrets` store; Helm hooks kept and mapped by Argo CD, unmappable hooks disabled or rendered with `--no-hooks` and recorded in the component) and applied by Argo CD as plain directory sources with sync waves (CRDs `-1`, ordinary resources `0`, child `Application` resources `1` or higher), everywhere including tenant manifests in `gsuquet/gitops`, and against Argo CD Helm sources and Config Management Plugins, to achieve reviewed and statically checked desired state with no chart repository needed at sync time, accepting large diffs and a render commit for every source change.
+- Context: delivering Helm-sourced components and tenant manifests through Argo CD, facing resources that are invisible in review when rendered at sync time.
+- Decision: we decided for manifests rendered by `mise run manifests:render` into `gitops/clusters/<name>/rendered/<component>/` (one file per resource; deterministic: no template-time generated values, certificates from cert-manager or in-cluster generators, credentials from the `secrets` store; Helm hooks kept and mapped by Argo CD, unmappable hooks disabled or rendered with `--no-hooks` and recorded in the component) and applied by Argo CD as plain directory sources with sync waves (CRDs `-1`, ordinary resources `0`, child `Application` resources `1` or higher), everywhere including tenant manifests in `gsuquet/gitops`, and against Argo CD Helm sources and Config Management Plugins, to achieve reviewed and statically checked desired state with no chart repository needed at sync time, accepting large diffs and a render commit for every source change.
 - Consequences:
   - Good: reviewers see every changed field of every cluster; Conftest and kubeconform check what reaches the cluster.
   - Good: the bootstrap applies the same `rendered/argocd/` files that Argo CD later adopts.

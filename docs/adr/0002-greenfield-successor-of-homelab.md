@@ -10,7 +10,8 @@ review: https://github.com/gsuquet/infra/pull/5
 # 0002. Build infra as a greenfield successor of homelab
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of delivering the new platform design (Talos, rendered manifests, tenants, Gateway API), facing a legacy repository coupled to the production k3s cluster `olympus`, we decided for a greenfield `gsuquet/infra` with `gsuquet/homelab` frozen (no new features; it runs `olympus` until a Talos Raspberry Pi cluster from `infra` replaces it, then it is archived; its `modules/`, `gitops/`, `policy/`, `schemas/`, `docs/` and `.mise` tasks are a reference, rewritten and never copied blindly), and against continuing the in-place migration in `homelab`, to achieve a clean tree with no Ansible that cannot break production, accepting two repositories during the transition.
+- Context: delivering the new platform design (Talos, rendered manifests, tenants, Gateway API), facing a legacy repository coupled to the production k3s cluster `olympus`.
+- Decision: we decided for a greenfield `gsuquet/infra` with `gsuquet/homelab` frozen (no new features; it runs `olympus` until a Talos Raspberry Pi cluster from `infra` replaces it, then it is archived; its `modules/`, `gitops/`, `policy/`, `schemas/`, `docs/` and `.mise` tasks are a reference, rewritten and never copied blindly), and against continuing the in-place migration in `homelab`, to achieve a clean tree with no Ansible that cannot break production, accepting two repositories during the transition.
 - Consequences:
   - Good: `infra` starts clean, with no Ansible and no legacy folder.
   - Good: the production cluster is not touched by design experiments.

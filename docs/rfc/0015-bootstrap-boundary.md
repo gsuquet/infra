@@ -21,6 +21,11 @@ superseded-by: null
 The IaC root of a cluster creates the cluster and installs only the Gateway API CRDs, Cilium and Argo CD, from
 the same rendered manifests Argo CD later applies. Argo CD then adopts them and installs everything else.
 
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Limit a cluster root to the cluster, the Gateway API CRDs, Cilium and Argo CD | A node needs a CNI before any pod can run | Adoption needs care while IaC and Argo CD both know the resources | yes, destroy and recreate the cluster root (disposable before it holds data) |
+| Let Argo CD adopt these resources and install everything else | IaC state must not fight Argo CD | Bootstrap modules must not revert Argo CD's later changes | yes, destroy and recreate the cluster root (disposable before it holds data) |
+
 ## Context
 
 - A new cluster has no CNI and no GitOps controller.
@@ -106,8 +111,10 @@ Four steps, then Argo CD owns the cluster's content.
 
 ## Drawbacks and risks
 
-- IaC and Argo CD briefly both know these resources -> bootstrap modules apply once or ignore changes after creation.
-- Destroying the cluster root can hang on in-cluster resources Argo CD created (cloud load balancers) -> `cluster:down` documents the order.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| IaC and Argo CD briefly both know these resources | medium | bootstrap modules apply once or ignore changes after creation. |
+| Destroying the cluster root can hang on in-cluster resources Argo CD created (cloud load balancers) | medium | `cluster:down` documents the order. |
 
 ## Open questions
 
@@ -116,7 +123,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of bringing a new cluster from nothing to GitOps, facing a node that needs a CNI before any pod and IaC state that would fight Argo CD, we decided for a cluster root `clusters/<name>/` that calls only `cluster-*` and `bootstrap-*` modules, in order: the cluster (`cluster-kind`, `cluster-talos` or `cluster-gke`), `bootstrap-gateway-api` from `rendered/gateway-api-crds/`, `bootstrap-cilium` from `rendered/cilium/` (both skipped on GKE), `bootstrap-argocd` from `rendered/argocd/` with its root `Application`, after which Argo CD adopts the same resources with no diff and installs everything else, and against every component in IaC with `helm_release` and a hand-installed Argo CD, to achieve one set of reviewed manifests and Argo CD as the single long-term owner, accepting a short period where IaC and Argo CD both know these resources.
+- Context: bringing a new cluster from nothing to GitOps, facing a node that needs a CNI before any pod and IaC state that would fight Argo CD.
+- Decision: we decided for a cluster root `clusters/<name>/` that calls only `cluster-*` and `bootstrap-*` modules, in order: the cluster (`cluster-kind`, `cluster-talos` or `cluster-gke`), `bootstrap-gateway-api` from `rendered/gateway-api-crds/`, `bootstrap-cilium` from `rendered/cilium/` (both skipped on GKE), `bootstrap-argocd` from `rendered/argocd/` with its root `Application`, after which Argo CD adopts the same resources with no diff and installs everything else, and against every component in IaC with `helm_release` and a hand-installed Argo CD, to achieve one set of reviewed manifests and Argo CD as the single long-term owner, accepting a short period where IaC and Argo CD both know these resources.
 - Consequences:
   - Good: the bootstrap reuses the reviewed rendered files: no second set of values.
   - Good: Argo CD is the single long-term owner of every in-cluster resource.

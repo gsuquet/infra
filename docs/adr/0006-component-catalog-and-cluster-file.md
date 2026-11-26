@@ -10,7 +10,8 @@ review: https://github.com/gsuquet/infra/pull/5
 # 0006. Define a component catalog and a cluster.yaml per cluster
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of several clusters running overlapping components with small differences, facing drift between copies and the need for one view per cluster, we decided for a component catalog `gitops/components/<name>/` (Helm source with a pinned version and default values) and one `gitops/clusters/<name>/cluster.yaml` per cluster (enabled components, per-component value overrides, tenants), merged by the render into `gitops/clusters/<name>/rendered/<component>/`, and against per-cluster copies and Argo CD ApplicationSets with cluster generators, to achieve one definition per component and one reviewable file per cluster, accepting a custom render task and config split between catalog and cluster file.
+- Context: several clusters running overlapping components with small differences, facing drift between copies and the need for one view per cluster.
+- Decision: we decided for a component catalog `gitops/components/<name>/` (Helm source with a pinned version and default values) and one `gitops/clusters/<name>/cluster.yaml` per cluster (enabled components, per-component value overrides, tenants), merged by the render into `gitops/clusters/<name>/rendered/<component>/`, and against per-cluster copies and Argo CD ApplicationSets with cluster generators, to achieve one definition per component and one reviewable file per cluster, accepting a custom render task and config split between catalog and cluster file.
 - Consequences:
   - Good: adding a component to a cluster is one line plus optional overrides.
   - Good: a chart version bump lives in one place and renders into every cluster.

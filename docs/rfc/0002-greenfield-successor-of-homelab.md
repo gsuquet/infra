@@ -22,6 +22,11 @@ The new platform design is built in a new repository, `gsuquet/infra`. `gsuquet/
 running the production cluster `olympus` until a Talos Raspberry Pi cluster from `infra` replaces it, then it is
 archived.
 
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Build the new design in a greenfield `gsuquet/infra` | `homelab` is coupled to the running production cluster | Two repositories during the transition; shared logic is rewritten | yes, before the cut-over, drop the Talos cluster and keep `olympus` |
+| Freeze `gsuquet/homelab`, then archive it after the cut-over | `olympus` must keep running until a replacement exists | Fixes to `olympus` still happen in `homelab` | no, irreversible once `homelab` is archived |
+
 ## Context
 
 - `gsuquet/homelab` provisions the production k3s cluster `olympus` on Raspberry Pis with Ansible.
@@ -99,9 +104,11 @@ Transition: `homelab` stays the production source until the cut-over, then is ar
 
 ## Drawbacks and risks
 
-- Two repositories during the transition; fixes to `olympus` still happen in `homelab` -> `homelab` is frozen for features only.
-- The history of reused ideas stays in `homelab` -> RFCs and ADRs here record the decisions again.
-- Shared logic (render, policies) must be rewritten -> `homelab` stays readable as a reference implementation.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| Two repositories during the transition; fixes to `olympus` still happen in `homelab` | medium | `homelab` is frozen for features only. |
+| Shared logic (render, policies) must be rewritten | medium | `homelab` stays readable as a reference implementation. |
+| The history of reused ideas stays in `homelab` | low | RFCs and ADRs here record the decisions again. |
 
 ## Open questions
 
@@ -110,7 +117,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of delivering the new platform design (Talos, rendered manifests, tenants, Gateway API), facing a legacy repository coupled to the production k3s cluster `olympus`, we decided for a greenfield `gsuquet/infra` with `gsuquet/homelab` frozen (no new features; it runs `olympus` until a Talos Raspberry Pi cluster from `infra` replaces it, then it is archived; its `modules/`, `gitops/`, `policy/`, `schemas/`, `docs/` and `.mise` tasks are a reference, rewritten and never copied blindly), and against continuing the in-place migration in `homelab`, to achieve a clean tree with no Ansible that cannot break production, accepting two repositories during the transition.
+- Context: delivering the new platform design (Talos, rendered manifests, tenants, Gateway API), facing a legacy repository coupled to the production k3s cluster `olympus`.
+- Decision: we decided for a greenfield `gsuquet/infra` with `gsuquet/homelab` frozen (no new features; it runs `olympus` until a Talos Raspberry Pi cluster from `infra` replaces it, then it is archived; its `modules/`, `gitops/`, `policy/`, `schemas/`, `docs/` and `.mise` tasks are a reference, rewritten and never copied blindly), and against continuing the in-place migration in `homelab`, to achieve a clean tree with no Ansible that cannot break production, accepting two repositories during the transition.
 - Consequences:
   - Good: `infra` starts clean, with no Ansible and no legacy folder.
   - Good: the production cluster is not touched by design experiments.

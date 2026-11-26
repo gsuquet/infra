@@ -10,7 +10,8 @@ review: https://github.com/gsuquet/infra/pull/5
 # 0008. Promote tenant releases with Kargo git-only steps
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of promoting tenant releases through stages (for example kind, then Talos, then GKE), facing Kargo's choice between Git writes and driving Argo CD, we decided for Kargo with git-only promotion steps (render the tenant manifests for the target stage, open a pull request to `gsuquet/gitops` under `tenants/<tenant>/<cluster>/`, Argo CD syncs after the merge; Kargo is an opt-in component), and against the `argocd-update` step and manual pull requests, to achieve Git as the only source of desired state with every promotion reviewable, accepting promotion latency of a merge plus a sync interval.
+- Context: promoting tenant releases through stages (for example kind, then Talos, then GKE), facing Kargo's choice between Git writes and driving Argo CD.
+- Decision: we decided for Kargo with git-only promotion steps (render the tenant manifests for the target stage, open a pull request to `gsuquet/gitops` under `tenants/<tenant>/<cluster>/`, Argo CD syncs after the merge; Kargo is an opt-in component), and against the `argocd-update` step and manual pull requests, to achieve Git as the only source of desired state with every promotion reviewable, accepting promotion latency of a merge plus a sync interval.
 - Consequences:
   - Good: each promotion is a commit with a diff.
   - Good: Kargo needs no write access to any Argo CD.

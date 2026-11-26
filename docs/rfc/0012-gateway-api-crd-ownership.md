@@ -16,11 +16,19 @@ superseded-by: null
 
 # RFC 0012: Give Gateway API CRDs one owner per cluster
 
+<!-- readability: allow-code L2 -->
+
 ## Summary
 
 North-south traffic uses Gateway API. A dedicated `gateway-api-crds` component owns the CRDs on kind and Talos,
 GKE owns them on GKE, and every implementation is installed without its bundled CRDs and owns one
 `GatewayClass`, so implementations can be swapped or combined per cluster.
+
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Give the CRDs one owner on kind and Talos: the baseline `gateway-api-crds` component at one pinned version | Charts that bundle the CRDs fight on version and sync | A version check per implementation on every CRD upgrade | no, never remove the CRDs while routes exist (deleting them is irreversible for the routes) |
+| Let GKE own the CRDs on GKE | GKE installs and manages them itself | The CRD version follows Google's schedule, not the pin | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) |
+| Install each implementation without CRDs, with exactly one `GatewayClass` | Implementations can be swapped or combined | Each chart needs an option to disable bundled CRDs | yes, switching implementation keeps CRDs and routes |
 
 ## Context
 
@@ -111,10 +119,12 @@ One CRD owner per cluster; implementations only consume the CRDs.
 
 ## Drawbacks and risks
 
-- Each implementation's supported Gateway API version must be checked against the pinned CRDs on upgrade -> one CRD bump pull request per upgrade.
-- The CRDs are installed by IaC at bootstrap, then adopted by Argo CD -> same rendered files (RFC 0015).
-- On GKE the CRD version follows Google's schedule, not the pin -> GKE implementations must support it.
-- kind and Talos have no load balancer provider for the per-`Gateway` `LoadBalancer` `Service` -> LB-IPAM with L2 announcements or host network mode, chosen in the `cilium` component.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| Each implementation's supported Gateway API version must be checked against the pinned CRDs on upgrade | medium | one CRD bump pull request per upgrade. |
+| On GKE the CRD version follows Google's schedule, not the pin | medium | GKE implementations must support it. |
+| kind and Talos have no load balancer provider for the per-`Gateway` `LoadBalancer` `Service` | medium | LB-IPAM with L2 announcements or host network mode, chosen in the `cilium` component. |
+| The CRDs are installed by IaC at bootstrap, then adopted by Argo CD | low | same rendered files (RFC 0015). |
 
 ## Open questions
 
@@ -123,7 +133,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of Gateway API for north-south traffic with several possible implementations, facing charts that bundle and fight over the same CRDs, we decided for one CRD owner per cluster: the baseline `gateway-api-crds` component on kind and Talos (upstream standard-channel CRDs at one pinned version, including every CRD the enabled implementations need, for Cilium `GatewayClass`, `Gateway`, `HTTPRoute`, `GRPCRoute`, `BackendTLSPolicy`, `ReferenceGrant` and `TLSRoute`) and GKE itself on GKE (`gateway-api-crds` skipped, `bootstrap-gateway-api` not called), with every implementation installed with CRD installation disabled, owning exactly one `GatewayClass`, chosen per cluster in `cluster.yaml` and allowed to coexist, and against implementation-installed CRDs and the Ingress API, to achieve one CRD version per cluster and swappable implementations, accepting a version check per implementation on every CRD upgrade.
+- Context: Gateway API for north-south traffic with several possible implementations, facing charts that bundle and fight over the same CRDs.
+- Decision: we decided for one CRD owner per cluster: the baseline `gateway-api-crds` component on kind and Talos (upstream standard-channel CRDs at one pinned version, including every CRD the enabled implementations need, for Cilium `GatewayClass`, `Gateway`, `HTTPRoute`, `GRPCRoute`, `BackendTLSPolicy`, `ReferenceGrant` and `TLSRoute`) and GKE itself on GKE (`gateway-api-crds` skipped, `bootstrap-gateway-api` not called), with every implementation installed with CRD installation disabled, owning exactly one `GatewayClass`, chosen per cluster in `cluster.yaml` and allowed to coexist, and against implementation-installed CRDs and the Ingress API, to achieve one CRD version per cluster and swappable implementations, accepting a version check per implementation on every CRD upgrade.
 - Consequences:
   - Good: CRD upgrades are one explicit pull request; switching implementation keeps the CRDs and the routes.
   - Bad: each implementation's supported Gateway API version is checked against the pinned CRDs on upgrade.

@@ -10,7 +10,8 @@ review: https://github.com/gsuquet/infra/pull/5
 # 0016. Read secrets through an ESO store named secrets
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of platform components and tenants that need secrets before the backend is chosen, facing public repositories and kind clusters with no credentials, we decided for the External Secrets Operator with a namespaced `SecretStore` named `secrets` in every namespace, rendered by the platform (tenant namespaces through onboarding), never a `ClusterSecretStore`, with every `ExternalSecret` setting `secretStoreRef: {kind: SecretStore, name: secrets}` and kind using an in-cluster backend with dummy values, and against backend-specific store names and SOPS-encrypted secrets in Git, to achieve consumers that never change when the backend changes, accepting one indirection and one backend credential or identity binding per namespace.
+- Context: platform components and tenants that need secrets before the backend is chosen, facing public repositories and kind clusters with no credentials.
+- Decision: we decided for the External Secrets Operator with a namespaced `SecretStore` named `secrets` in every namespace, rendered by the platform (tenant namespaces through onboarding), never a `ClusterSecretStore`, with every `ExternalSecret` setting `secretStoreRef: {kind: SecretStore, name: secrets}` and kind using an in-cluster backend with dummy values, and against backend-specific store names and SOPS-encrypted secrets in Git, to achieve consumers that never change when the backend changes, accepting one indirection and one backend credential or identity binding per namespace.
 - Consequences:
   - Good: changing the backend changes only the rendered stores, not consumers.
   - Good: kind runs the full catalog with no credentials.

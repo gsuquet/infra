@@ -22,6 +22,12 @@ A tenant is declared in `gitops/tenants/<tenant>.yaml` and listed in each `clust
 produces its namespaces, Argo CD project, quotas, secret store and `Application`. Tenants own only their
 workloads.
 
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Declare each tenant in `gitops/tenants/<tenant>.yaml`, listed in `cluster.yaml` and rendered by `infra` | Onboarding is declarative and reviewed | An `infra` pull request for every tenant change | yes, revert the commit; Argo CD restores the previous onboarding (pruning a namespace deletes its workloads) |
+| Limit each tenant `AppProject` to `gsuquet/gitops`, its namespaces, no cluster-scoped resource and no network policy | A tenant cannot escape its namespaces or open network paths | The platform declares every network allow | yes, revert the commit; Argo CD restores the previous onboarding (pruning a namespace deletes its workloads) |
+| Enforce Pod Security `restricted` on tenant namespaces | Privileged and host-access pods would escape isolation | Tenants build images that need no root or extra capabilities | yes, revert the commit; Argo CD restores the previous onboarding (pruning a namespace deletes its workloads) |
+
 ## Context
 
 - A tenant needs namespaces, permissions, quotas and an Argo CD `Application` on each cluster where it runs.
@@ -107,10 +113,12 @@ Pod Security: a tenant file may lower its namespaces to `baseline` only through 
 
 ## Drawbacks and risks
 
-- Tenants cannot add their own network allows: any allow (ingress from a Gateway, egress to a database) is declared by the platform, likely in the tenant file -> the format is future work.
-- `restricted` rejects images that run as root or need extra capabilities -> tenants build for it; `baseline` only through an `infra` pull request.
-- Every new tenant or quota change is an `infra` pull request -> acceptable for few tenants.
-- The blacklist does not list `SecretStore`: a tenant could ship its own store named `secrets` and fight the platform one (RFC 0016) -> adding `SecretStore` to the blacklist waits for the owner's decision, because it extends the settled blacklist.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| The blacklist does not list `SecretStore`: a tenant could ship its own store named `secrets` and fight the platform one (RFC 0016) | high | adding `SecretStore` to the blacklist waits for the owner's decision, because it extends the settled blacklist. |
+| Tenants cannot add their own network allows: any allow (ingress from a Gateway, egress to a database) is declared by the platform, likely in the tenant file | medium | the format is future work. |
+| `restricted` rejects images that run as root or need extra capabilities | low | tenants build for it; `baseline` only through an `infra` pull request. |
+| Every new tenant or quota change is an `infra` pull request | low | acceptable for few tenants. |
 
 ## Open questions
 
@@ -119,7 +127,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of onboarding tenants onto shared clusters, facing tenants escaping their namespaces or opening network paths, we decided for `gitops/tenants/<tenant>.yaml` plus a tenant list in each `cluster.yaml`, rendered by `infra` into, per tenant: namespaces with the network policy label and `pod-security.kubernetes.io/enforce: restricted` (lowered to `baseline` only through an `infra` pull request, never `privileged`); an `AppProject` with `sourceRepos` only `gsuquet/gitops`, destinations only the tenant namespaces, an empty `clusterResourceWhitelist` and `NetworkPolicy` and `CiliumNetworkPolicy` in `namespaceResourceBlacklist`; a `ResourceQuota` and a `LimitRange` per namespace; the `SecretStore` `secrets` per namespace; and an `Application` on `tenants/<tenant>/<cluster>/` in `gsuquet/gitops`, and against tenant-created namespaces and a self-service operator, to achieve isolation from one reviewed template, accepting an `infra` pull request for every tenant change.
+- Context: onboarding tenants onto shared clusters, facing tenants escaping their namespaces or opening network paths.
+- Decision: we decided for `gitops/tenants/<tenant>.yaml` plus a tenant list in each `cluster.yaml`, rendered by `infra` into, per tenant: namespaces with the network policy label and `pod-security.kubernetes.io/enforce: restricted` (lowered to `baseline` only through an `infra` pull request, never `privileged`); an `AppProject` with `sourceRepos` only `gsuquet/gitops`, destinations only the tenant namespaces, an empty `clusterResourceWhitelist` and `NetworkPolicy` and `CiliumNetworkPolicy` in `namespaceResourceBlacklist`; a `ResourceQuota` and a `LimitRange` per namespace; the `SecretStore` `secrets` per namespace; and an `Application` on `tenants/<tenant>/<cluster>/` in `gsuquet/gitops`, and against tenant-created namespaces and a self-service operator, to achieve isolation from one reviewed template, accepting an `infra` pull request for every tenant change.
 - Consequences:
   - Good: a tenant cannot create cluster-scoped resources or network policies, and `restricted` rejects privileged, `hostNetwork`, `hostPID` and `hostPath` pods that would reach the node or sit outside the endpoint default deny.
   - Good: quotas protect shared hardware such as Raspberry Pis.

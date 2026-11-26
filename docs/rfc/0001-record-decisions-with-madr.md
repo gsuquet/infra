@@ -22,6 +22,11 @@ Every structural decision of `infra` starts as an RFC in `docs/rfc/`, reviewed i
 accepted, its Decision section is copied into a generated ADR in `docs/adr/` with the same number. Humans
 read the RFC; agents read the compact ADR.
 
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Write one RFC per decision in `docs/rfc/`, reviewed in a pull request | MADR has no review state and mixes debate and outcome | A heavier template than MADR | yes, revert the pull request: the MADR ADRs come back |
+| Generate each ADR from the accepted Decision section | Agents read a decision at the lowest token cost | Two files per decision | yes, revert the pull request: the MADR ADRs come back |
+
 ## Context
 
 - `infra` starts with structural decisions settled before any platform code exists.
@@ -115,9 +120,11 @@ promotion, 0022 IaC tool, 0023 Renovate with rendered manifests, 0024 GKE, 0025 
 
 ## Drawbacks and risks
 
-- An RFC is heavier than a MADR file for a small decision -> lightweight track, and a two-way change with no wide blast radius needs only a pull request.
-- An ADR edited by hand drifts from its RFC -> the RFC check compares them; fix the RFC and regenerate.
-- READMEs and ADRs can drift -> READMEs describe the current state and link the ADR for the why.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| READMEs and ADRs can drift | medium | READMEs describe the current state and link the ADR for the why. |
+| An RFC is heavier than a MADR file for a small decision | low | lightweight track, and a two-way change with no wide blast radius needs only a pull request. |
+| An ADR edited by hand drifts from its RFC | low | the RFC check compares them; fix the RFC and regenerate. |
 
 ## Open questions
 
@@ -126,7 +133,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-19 by gsuquet
-- Decision: In the context of recording the structural decisions of `infra`, facing hand-written MADR prose that mixes debate and outcome and has no review state, we decided for one RFC per decision in `docs/rfc/NNNN-slug.md` (lifecycle draft, review, accepted, rejected, withdrawn, superseded; reviewed in a pull request) whose accepted Decision section is copied verbatim into a generated ADR `docs/adr/NNNN-slug.md` with the same number, and against hand-written MADR, explanation pages and decisions kept only in pull request descriptions, to achieve a reviewed human record and a compact ADR that agents read, accepting two files per decision and a heavier template.
+- Context: recording the structural decisions of `infra`, facing hand-written MADR prose that mixes debate and outcome and has no review state.
+- Decision: we decided for one RFC per decision in `docs/rfc/NNNN-slug.md` (lifecycle draft, review, accepted, rejected, withdrawn, superseded; reviewed in a pull request) whose accepted Decision section is copied verbatim into a generated ADR `docs/adr/NNNN-slug.md` with the same number, and against hand-written MADR, explanation pages and decisions kept only in pull request descriptions, to achieve a reviewed human record and a compact ADR that agents read, accepting two files per decision and a heavier template.
 - Consequences:
   - Good: an ADR holds only the Decision block, the cheapest form for agents to read.
   - Good: each decision has a stable link, a status and its review pull request in front matter.

@@ -21,6 +21,11 @@ superseded-by: null
 Each component is defined once in `gitops/components/<name>/`. Each cluster says what it runs, with which
 overrides and which tenants, in one `gitops/clusters/<name>/cluster.yaml`. The render merges both.
 
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Define each component once in `gitops/components/<name>/` | Copies drift between clusters | Effective config split between catalog and cluster file | yes, revert the commit; the next render and sync restore the previous files |
+| Describe each cluster in one `cluster.yaml`, merged by the render | One reviewable file tells what a cluster runs | A custom render task and a file format that is a contract | yes, revert the commit; the next render and sync restore the previous files |
+
 ## Context
 
 - Several clusters run overlapping sets of components with small differences (CNI, storage, domains).
@@ -74,7 +79,7 @@ No structure: each cluster folder holds whatever it needs.
 
 ```mermaid
 flowchart LR
-    C["gitops/components/{name}/: Helm source, pinned version, default values"] --> R["manifests:render"]
+    C["gitops/components/{name}/: Helm source, default values"] --> R["manifests:render"]
     K["gitops/clusters/{name}/cluster.yaml: components, overrides, tenants"] --> R
     T["gitops/tenants/{tenant}.yaml"] --> R
     R --> O["gitops/clusters/{name}/rendered/{component}/"]
@@ -100,8 +105,10 @@ The render reads only the catalog, the cluster files and the tenant files.
 
 ## Drawbacks and risks
 
-- A component's effective config is split between the catalog and each `cluster.yaml` -> the rendered output shows the merged result.
-- The `cluster.yaml` format is a contract -> it has a JSON Schema and a check.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| The `cluster.yaml` format is a contract | medium | it has a JSON Schema and a check. |
+| A component's effective config is split between the catalog and each `cluster.yaml` | low | the rendered output shows the merged result. |
 
 ## Open questions
 
@@ -110,7 +117,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of several clusters running overlapping components with small differences, facing drift between copies and the need for one view per cluster, we decided for a component catalog `gitops/components/<name>/` (Helm source with a pinned version and default values) and one `gitops/clusters/<name>/cluster.yaml` per cluster (enabled components, per-component value overrides, tenants), merged by the render into `gitops/clusters/<name>/rendered/<component>/`, and against per-cluster copies and Argo CD ApplicationSets with cluster generators, to achieve one definition per component and one reviewable file per cluster, accepting a custom render task and config split between catalog and cluster file.
+- Context: several clusters running overlapping components with small differences, facing drift between copies and the need for one view per cluster.
+- Decision: we decided for a component catalog `gitops/components/<name>/` (Helm source with a pinned version and default values) and one `gitops/clusters/<name>/cluster.yaml` per cluster (enabled components, per-component value overrides, tenants), merged by the render into `gitops/clusters/<name>/rendered/<component>/`, and against per-cluster copies and Argo CD ApplicationSets with cluster generators, to achieve one definition per component and one reviewable file per cluster, accepting a custom render task and config split between catalog and cluster file.
 - Consequences:
   - Good: adding a component to a cluster is one line plus optional overrides.
   - Good: a chart version bump lives in one place and renders into every cluster.

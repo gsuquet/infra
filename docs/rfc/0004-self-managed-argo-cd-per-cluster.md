@@ -21,6 +21,11 @@ superseded-by: null
 Each cluster runs its own vanilla Argo CD, installed once by the bootstrap and then managed by itself from the
 cluster's rendered manifests. No hub and no `argocd-agent` for now.
 
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Run one upstream, vanilla Argo CD per cluster | A cluster syncs and recovers alone | One UI and one set of credentials per cluster | yes, moving to a hub only changes who applies the same rendered manifests |
+| Let Argo CD manage itself from `rendered/argocd/` after the first install | Its upgrades are ordinary pull requests | A broken self-update needs a manual re-apply | yes, revert the upgrade commit; when the self-update broke Argo CD, re-apply `rendered/argocd/` by hand |
+
 ## Context
 
 - Each cluster needs a GitOps controller.
@@ -102,8 +107,10 @@ Self-management: the bootstrap and Argo CD apply the same `rendered/argocd/` fil
 
 ## Drawbacks and risks
 
-- A broken Argo CD self-update cannot repair itself -> re-apply `rendered/argocd/` manually; the bootstrap module applies the same files.
-- One Argo CD UI and one set of credentials per cluster -> acceptable while there are few clusters.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| A broken Argo CD self-update cannot repair itself | medium | re-apply `rendered/argocd/` manually; the bootstrap module applies the same files. |
+| One Argo CD UI and one set of credentials per cluster | low | acceptable while there are few clusters. |
 
 ## Open questions
 
@@ -112,7 +119,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of choosing a GitOps topology for a few clusters, facing the choice between per-cluster, hub and `argocd-agent` topologies, we decided for one upstream vanilla Argo CD per cluster, installed once by the bootstrap and then managed by an Argo CD `Application` that points at `gitops/clusters/<name>/rendered/argocd/` (Argo CD manages itself and the other components; a cluster can opt some components out), and against a hub Argo CD and `argocd-agent`, to achieve clusters that sync and recover alone, accepting one UI and one set of credentials per cluster.
+- Context: choosing a GitOps topology for a few clusters, facing the choice between per-cluster, hub and `argocd-agent` topologies.
+- Decision: we decided for one upstream vanilla Argo CD per cluster, installed once by the bootstrap and then managed by an Argo CD `Application` that points at `gitops/clusters/<name>/rendered/argocd/` (Argo CD manages itself and the other components; a cluster can opt some components out), and against a hub Argo CD and `argocd-agent`, to achieve clusters that sync and recover alone, accepting one UI and one set of credentials per cluster.
 - Consequences:
   - Good: losing one cluster does not stop syncs on another; no cross-cluster credentials.
   - Good: Argo CD upgrades are ordinary pull requests to the cluster's rendered manifests.

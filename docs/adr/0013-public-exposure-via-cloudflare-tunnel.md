@@ -10,7 +10,8 @@ review: https://github.com/gsuquet/infra/pull/5
 # 0013. Expose public services through Cloudflare Tunnel
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of exposing services from clusters behind a home connection with no public IP and from the cloud, facing inbound ports and one model per target, we decided for Cloudflare Tunnel through an opt-in `cloudflared` component that connects outbound to Cloudflare and forwards to the cluster's Gateway (tunnel token delivered through the `secrets` store, never committed; a cluster root's Cloudflare token least-privileged, with no account-wide Access edit; account-wide and platform Access applications kept in `landing-zone/cloudflare`), and against a public load balancer with port forwarding and a VPN only, to achieve public services with no inbound port behind Access, accepting Cloudflare as the only public edge.
+- Context: exposing services from clusters behind a home connection with no public IP and from the cloud, facing inbound ports and one model per target.
+- Decision: we decided for Cloudflare Tunnel through an opt-in `cloudflared` component that connects outbound to Cloudflare and forwards to the cluster's Gateway (tunnel token delivered through the `secrets` store, never committed; a cluster root's Cloudflare token least-privileged, with no account-wide Access edit; account-wide and platform Access applications kept in `landing-zone/cloudflare`), and against a public load balancer with port forwarding and a VPN only, to achieve public services with no inbound port behind Access, accepting Cloudflare as the only public edge.
 - Consequences:
   - Good: no inbound port and no public IP needed.
   - Good: Access applications and policies from the landing zone apply in front of the tunnel.

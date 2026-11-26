@@ -22,6 +22,12 @@ Public services reach the internet only through Cloudflare Tunnel: an opt-in `cl
 outbound to Cloudflare and forwards to the cluster's Gateway. Amended on 2026-11-19: a cluster root's Cloudflare
 token is least-privileged, and account-wide and platform Access applications stay in `landing-zone/cloudflare`.
 
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Expose public services only through Cloudflare Tunnel, with an opt-in `cloudflared` component | No inbound port, and one model for every target | Cloudflare is the only public edge | yes, disable `cloudflared` in `cluster.yaml`; services stay reachable on the LAN |
+| Give a cluster root a least-privileged Cloudflare token, with no account-wide Access edit | A leaked token cannot change account-wide Access | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) |
+| Keep account-wide and platform Access applications in `landing-zone/cloudflare` | Domains and Access policies are already managed there | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) |
+
 ## Context
 
 - Raspberry Pis and local servers sit behind a home connection with no stable public IP and no inbound port.
@@ -80,8 +86,8 @@ flowchart LR
     U["internet user"] --> CF["Cloudflare edge: Access"]
     CF -->|"tunnel, connection opened from inside"| CD["cloudflared (opt-in component)"]
     CD --> GW["cluster Gateway"]
-    LZ["landing-zone/cloudflare: zones, account-wide and platform Access applications"] -.-> CF
-    CR["clusters/{name}/: least-privileged Cloudflare token, no account-wide Access edit"] -.-> CF
+    LZ["landing-zone/cloudflare"] -.->|"zones, account-wide and platform Access applications"| CF
+    CR["clusters/{name}/: least-privileged Cloudflare token"] -.->|"no account-wide Access edit"| CF
 ```
 
 Only outbound connections; Access ownership stays in the landing zone.
@@ -106,9 +112,11 @@ Only outbound connections; Access ownership stays in the landing zone.
 
 ## Drawbacks and risks
 
-- Public traffic depends on Cloudflare -> accepted for the public edge.
-- The tunnel token is a secret -> delivered through the `secrets` store (RFC 0016), never committed.
-- An account-wide token in a cluster root would widen the blast radius of a leak to every Access application -> least-privileged cluster-root token; Access applications stay in the landing zone.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| An account-wide token in a cluster root would widen the blast radius of a leak to every Access application | high | least-privileged cluster-root token; Access applications stay in the landing zone. |
+| Public traffic depends on Cloudflare | medium | accepted for the public edge. |
+| The tunnel token is a secret | medium | delivered through the `secrets` store (RFC 0016), never committed. |
 
 ## Open questions
 
@@ -117,7 +125,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of exposing services from clusters behind a home connection with no public IP and from the cloud, facing inbound ports and one model per target, we decided for Cloudflare Tunnel through an opt-in `cloudflared` component that connects outbound to Cloudflare and forwards to the cluster's Gateway (tunnel token delivered through the `secrets` store, never committed; a cluster root's Cloudflare token least-privileged, with no account-wide Access edit; account-wide and platform Access applications kept in `landing-zone/cloudflare`), and against a public load balancer with port forwarding and a VPN only, to achieve public services with no inbound port behind Access, accepting Cloudflare as the only public edge.
+- Context: exposing services from clusters behind a home connection with no public IP and from the cloud, facing inbound ports and one model per target.
+- Decision: we decided for Cloudflare Tunnel through an opt-in `cloudflared` component that connects outbound to Cloudflare and forwards to the cluster's Gateway (tunnel token delivered through the `secrets` store, never committed; a cluster root's Cloudflare token least-privileged, with no account-wide Access edit; account-wide and platform Access applications kept in `landing-zone/cloudflare`), and against a public load balancer with port forwarding and a VPN only, to achieve public services with no inbound port behind Access, accepting Cloudflare as the only public edge.
 - Consequences:
   - Good: no inbound port and no public IP needed.
   - Good: Access applications and policies from the landing zone apply in front of the tunnel.

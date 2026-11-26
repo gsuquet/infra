@@ -16,12 +16,20 @@ superseded-by: null
 
 # RFC 0010: Enforce a label-selected default deny network policy
 
+<!-- readability: allow-code L7 V2 -->
+
 ## Summary
 
 One `CiliumClusterwideNetworkPolicy` denies ingress and egress by default for every endpoint in a namespace that
 carries the policy label, and Conftest fails any rendered namespace without that label. Amended on 2026-11-19:
 the default deny and the platform network policies live in a baseline catalog component, `network-policy`, on
 every cluster including GKE, instead of a render-emitted policy layer.
+
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Deny all traffic by default with one `CiliumClusterwideNetworkPolicy` selected by a namespace label, in a baseline `network-policy` component | Isolation does not depend on each chart or tenant | A Cilium-specific policy that fails open for namespaces created at runtime | yes, revert the `network-policy` change; removing the default deny opens all traffic |
+| Put the baseline and platform allow rules in the same component | One component owns every platform policy | Every platform flow needs an explicit rule | yes, revert the `network-policy` change |
+| Fail any rendered `Namespace` without the label in Conftest, except `kube-system` | A namespace that escapes the policy fails CI | Every namespace must be a rendered `Namespace` with the label | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) |
 
 ## Context
 
@@ -82,8 +90,8 @@ No network policy.
 flowchart TB
     NP["gitops/components/network-policy/ (baseline, every cluster, GKE included)"] --> R["rendered/network-policy/"]
     R --> D["CiliumClusterwideNetworkPolicy: default deny ingress and egress"]
-    R --> AL["baseline allows: egress to kube-dns and kube-apiserver"]
-    R --> PA["platform allows: Argo CD to Git, cert-manager to ACME, cloudflared to Cloudflare, API server webhooks"]
+    R --> AL["baseline allows: kube-dns and kube-apiserver"]
+    R --> PA["platform allows"]
     D -->|"selects endpoints by io.cilium.k8s.namespace.labels"| L["Namespaces with the policy label"]
     C["Conftest on rendered/"] -->|"fails a Namespace without the label"| L
 ```
@@ -92,6 +100,7 @@ The component owns every platform policy; the label decides what is covered.
 
 | Rule | Value |
 | --- | --- |
+| Baseline allows | egress to kube-dns and to the `kube-apiserver` entity |
 | Policy label | `network.infra.gsuquet.com/policy: default-deny` on every rendered `Namespace`, platform and tenant |
 | Exempt | `kube-system`: no label |
 | Pod Security | every labelled namespace also carries `pod-security.kubernetes.io/enforce`: `restricted` for tenants (RFC 0009), `baseline` by default for platform namespaces, `privileged` only by explicit opt-down for host access (for example Cilium outside `kube-system`) |
@@ -112,12 +121,14 @@ The component owns every platform policy; the label decides what is covered.
 
 ## Drawbacks and risks
 
-- Every platform component needs explicit allow rules (Argo CD to Git, cert-manager to ACME, cloudflared to Cloudflare, webhooks from the API server) -> written in the `network-policy` component.
-- The label selector fails open: a namespace created at runtime (Argo CD `CreateNamespace=true`, a chart or operator, Kargo `Project` namespaces) skips Conftest and has no default deny -> namespaces are rendered manifests; a runtime admission check is future work.
-- Endpoint policies do not cover `hostNetwork` pods -> Pod Security labels keep tenants off the host network; platform components that need it (Cilium) are reviewed per component.
-- GKE Dataplane V2 serves `CiliumClusterwideNetworkPolicy` only on clusters created with `enableCiliumClusterwideNetworkPolicy: true`; enabling it on an existing cluster restarts `anetd`, with downtime; no L7 rules, no node selectors, 1000 policies per cluster (GKE documentation) -> `cluster-gke` always sets the flag at creation (RFC 0003).
-- Unverified: GKE support for namespace-label selectors (`io.cilium.k8s.namespace.labels`) in `CiliumClusterwideNetworkPolicy`: the GKE documentation does not mention them -> if unsupported, `network-policy` renders a Kubernetes `NetworkPolicy` default deny per labelled namespace on GKE, decided in its own RFC.
-- Where platform `Namespace` manifests and tenant onboarding render is unresolved: a `rendered/platform/` layer (2026-11-18 decision) or the `tenant` component the render on `main` feeds -> owner decision, recorded in RFC 0009 or a new RFC.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| The label selector fails open: a namespace created at runtime (Argo CD `CreateNamespace=true`, a chart or operator, Kargo `Project` namespaces) skips Conftest and has no default deny | high | namespaces are rendered manifests; a runtime admission check is future work. |
+| Endpoint policies do not cover `hostNetwork` pods | high | Pod Security labels keep tenants off the host network; platform components that need it (Cilium) are reviewed per component. |
+| Unverified: GKE support for namespace-label selectors (`io.cilium.k8s.namespace.labels`) in `CiliumClusterwideNetworkPolicy`: the GKE documentation does not mention them | high | if unsupported, `network-policy` renders a Kubernetes `NetworkPolicy` default deny per labelled namespace on GKE, decided in its own RFC. |
+| Every platform component needs explicit allow rules (Argo CD to Git, cert-manager to ACME, cloudflared to Cloudflare, webhooks from the API server) | medium | written in the `network-policy` component. |
+| GKE Dataplane V2 serves `CiliumClusterwideNetworkPolicy` only on clusters created with `enableCiliumClusterwideNetworkPolicy: true`; enabling it on an existing cluster restarts `anetd`, with downtime; no L7 rules, no node selectors, 1000 policies per cluster (GKE documentation) | medium | `cluster-gke` always sets the flag at creation (RFC 0003). |
+| Where platform `Namespace` manifests and tenant onboarding render is unresolved: a `rendered/platform/` layer (2026-11-18 decision) or the `tenant` component the render on `main` feeds | medium | owner decision, recorded in RFC 0009 or a new RFC. |
 
 ## Open questions
 
@@ -126,7 +137,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of isolating platform and tenant namespaces on every cluster, facing isolation that depends on each chart or tenant shipping a policy, we decided for a baseline catalog component `network-policy` on every cluster, GKE included (where `cluster-gke` creates every cluster with `enableCiliumClusterwideNetworkPolicy: true`), that renders one `CiliumClusterwideNetworkPolicy` denying ingress and egress for every endpoint in a namespace labelled `network.infra.gsuquet.com/policy: default-deny` (selected through `io.cilium.k8s.namespace.labels`), the baseline allows (egress to kube-dns and to the `kube-apiserver` entity) and the allow rules of platform components, with Conftest failing any rendered `Namespace` without the label except `kube-system`, and against a render-emitted policy layer, a Kubernetes `NetworkPolicy` per namespace and policies owned by each component or tenant, to achieve default deny that a missing namespace label turns into a CI failure, accepting explicit allow rules for every platform flow and a Cilium-specific policy.
+- Context: isolating platform and tenant namespaces on every cluster, facing isolation that depends on each chart or tenant shipping a policy.
+- Decision: we decided for a baseline catalog component `network-policy` on every cluster, GKE included (where `cluster-gke` creates every cluster with `enableCiliumClusterwideNetworkPolicy: true`), that renders one `CiliumClusterwideNetworkPolicy` denying ingress and egress for every endpoint in a namespace labelled `network.infra.gsuquet.com/policy: default-deny` (selected through `io.cilium.k8s.namespace.labels`), the baseline allows (egress to kube-dns and to the `kube-apiserver` entity) and the allow rules of platform components, with Conftest failing any rendered `Namespace` without the label except `kube-system`, and against a render-emitted policy layer, a Kubernetes `NetworkPolicy` per namespace and policies owned by each component or tenant, to achieve default deny that a missing namespace label turns into a CI failure, accepting explicit allow rules for every platform flow and a Cilium-specific policy.
 - Consequences:
   - Good: one policy covers every labelled namespace, present and future; the label check turns a missing policy into a CI failure.
   - Good: amended 2026-11-19: the default deny and the platform policies moved from a render-emitted `rendered/platform/` layer into the baseline component `network-policy`, GKE included, so they are versioned, rendered and reviewed like any catalog component.

@@ -16,11 +16,19 @@ superseded-by: null
 
 # RFC 0003: Use kind, Talos and GKE as distributions per target
 
+<!-- readability: allow-code V2 -->
+
 ## Summary
 
 Each target gets one Kubernetes distribution and one child module: kind on developer machines, Talos Linux on
 Raspberry Pis and local servers, GKE in the cloud. Everything is provisioned by IaC, with no Ansible. Amended
 on 2026-11-19: `cluster-gke` takes Spot pools, on-demand pools or both, per cluster.
+
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Run kind on developer machines, Talos on owned hardware and GKE in the cloud, with one `cluster-*` module each | The most operable option per target, with no Ansible | Three code paths that differ in CNI, storage and load balancing | no, before a cluster holds data, destroy and recreate it; once it holds data, changing distribution needs a data migration and downtime |
+| Let each GKE cluster choose Spot pools, on-demand pools or both | Spot cuts the bill but can leave zero nodes | A Spot-only cluster can lose every node | yes, by input, with no module change |
+| Create every GKE cluster with Dataplane V2 and `enableCiliumClusterwideNetworkPolicy: true` | The `network-policy` component needs the CRD | Enabling the flag on an existing cluster restarts `anetd`, with downtime | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) |
 
 ## Context
 
@@ -115,11 +123,13 @@ only, on-demand only, or both (for example one on-demand node for the baseline a
 
 ## Drawbacks and risks
 
-- Three distributions differ in CNI, storage and load balancing -> the catalog handles the differences per cluster (RFC 0011).
-- GKE owns its dataplane (RFC 0011) and, with its Gateway API enabled (always on Autopilot), the Gateway API CRDs (RFC 0012) -> the catalog skips `cilium` and `gateway-api-crds` on GKE.
-- The `siderolabs/talos` provider does not manage the hardware -> flashing images and network boot stay manual steps.
-- A Spot-only GKE cluster can lose every node at once, Argo CD included -> pick on-demand pools, or both, where outages are not accepted.
-- The `network-policy` component needs the `CiliumClusterwideNetworkPolicy` CRD, which GKE adds only when the cluster sets `enableCiliumClusterwideNetworkPolicy: true`; enabling it on an existing cluster restarts `anetd`, with downtime -> `cluster-gke` always sets it at creation.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| A Spot-only GKE cluster can lose every node at once, Argo CD included | high | pick on-demand pools, or both, where outages are not accepted. |
+| The `network-policy` component needs the `CiliumClusterwideNetworkPolicy` CRD, which GKE adds only when the cluster sets `enableCiliumClusterwideNetworkPolicy: true`; enabling it on an existing cluster restarts `anetd`, with downtime | high | `cluster-gke` always sets it at creation. |
+| The `siderolabs/talos` provider does not manage the hardware | medium | flashing images and network boot stay manual steps. |
+| Three distributions differ in CNI, storage and load balancing | low | the catalog handles the differences per cluster (RFC 0011). |
+| GKE owns its dataplane (RFC 0011) and, with its Gateway API enabled (always on Autopilot), the Gateway API CRDs (RFC 0012) | low | the catalog skips `cilium` and `gateway-api-crds` on GKE. |
 
 ## Open questions
 
@@ -128,7 +138,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of running one GitOps catalog on developer machines, owned hardware and a cloud, facing different constraints per target, we decided for kind on developer machines (a kind provider chosen in `cluster-kind`), Talos Linux on Raspberry Pis and local servers (`siderolabs/talos` provider, API only, no SSH, no Ansible) and managed GKE in the cloud (`hashicorp/google`; `cluster-gke` takes Spot pools, on-demand pools or both, per cluster, by input, and always creates the cluster with Dataplane V2 and `enableCiliumClusterwideNetworkPolicy: true`), with exactly one `cluster-*` module per target, and against k3s installed by Ansible and kubeadm with self-managed cloud VMs, to achieve immutable API-driven hardware, no cloud control plane to operate and a disposable local copy of the catalog, accepting three code paths that differ in CNI, storage and load balancing.
+- Context: running one GitOps catalog on developer machines, owned hardware and a cloud, facing different constraints per target.
+- Decision: we decided for kind on developer machines (a kind provider chosen in `cluster-kind`), Talos Linux on Raspberry Pis and local servers (`siderolabs/talos` provider, API only, no SSH, no Ansible) and managed GKE in the cloud (`hashicorp/google`; `cluster-gke` takes Spot pools, on-demand pools or both, per cluster, by input, and always creates the cluster with Dataplane V2 and `enableCiliumClusterwideNetworkPolicy: true`), with exactly one `cluster-*` module per target, and against k3s installed by Ansible and kubeadm with self-managed cloud VMs, to achieve immutable API-driven hardware, no cloud control plane to operate and a disposable local copy of the catalog, accepting three code paths that differ in CNI, storage and load balancing.
 - Consequences:
   - Good: Talos is configured only through its API: machine configs are rendered by IaC, no SSH, no Ansible.
   - Good: GKE removes control plane operations; kind gives a disposable cluster to test the same catalog.

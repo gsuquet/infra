@@ -16,10 +16,17 @@ superseded-by: null
 
 # RFC 0018: Keep kind state local and other cluster states in R2
 
+<!-- readability: allow-code R2 -->
+
 ## Summary
 
 kind cluster roots keep their state on the local machine. Talos and GKE cluster roots store their state in the
 existing R2 bucket `terraform-state`, one key per cluster.
+
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Keep kind state on the local machine | A disposable cluster needs no credential | kind state is lost with the machine | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) |
+| Keep every other cluster state in the R2 bucket `terraform-state`, one locked key per cluster | Long-lived state survives a lost laptop and supports locking | R2 has no object versioning | no, moving a state to another backend is a state migration; irreversible without one |
 
 ## Context
 
@@ -101,9 +108,11 @@ State lives where the cluster's lifetime needs it.
 
 ## Drawbacks and risks
 
-- R2 has no object versioning: a corrupted state cannot be restored from the bucket -> accepted; backup outside R2 is future work.
-- GKE state lives on Cloudflare, outside Google Cloud -> one backend for all long-lived state outweighs locality.
-- kind state is lost with the machine -> acceptable for a disposable cluster.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| R2 has no object versioning: a corrupted state cannot be restored from the bucket | high | accepted; backup outside R2 is future work. |
+| GKE state lives on Cloudflare, outside Google Cloud | low | one backend for all long-lived state outweighs locality. |
+| kind state is lost with the machine | low | acceptable for a disposable cluster. |
 
 ## Open questions
 
@@ -112,7 +121,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of state for cluster roots with very different lifetimes, facing disposable kind clusters and long-lived Talos and GKE clusters, we decided for local state on kind roots (no remote backend) and, on every other root, the S3 backend against the existing R2 bucket `terraform-state` with key `clusters/<name>/terraform.tfstate`, `use_lockfile = true` and the R2 compatibility flags of `landing-zone/cloudflare/backend.tf`, and against R2 for every cluster and GCS for GKE, to achieve offline credential-free kind clusters and one locked backend for all long-lived state, accepting no object versioning on R2.
+- Context: state for cluster roots with very different lifetimes, facing disposable kind clusters and long-lived Talos and GKE clusters.
+- Decision: we decided for local state on kind roots (no remote backend) and, on every other root, the S3 backend against the existing R2 bucket `terraform-state` with key `clusters/<name>/terraform.tfstate`, `use_lockfile = true` and the R2 compatibility flags of `landing-zone/cloudflare/backend.tf`, and against R2 for every cluster and GCS for GKE, to achieve offline credential-free kind clusters and one locked backend for all long-lived state, accepting no object versioning on R2.
 - Consequences:
   - Good: `cluster:up` on kind works offline and without secrets.
   - Good: one backend for all long-lived state.

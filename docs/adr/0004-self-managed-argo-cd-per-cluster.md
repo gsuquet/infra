@@ -10,7 +10,8 @@ review: https://github.com/gsuquet/infra/pull/5
 # 0004. Run one self-managed Argo CD per cluster
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of choosing a GitOps topology for a few clusters, facing the choice between per-cluster, hub and `argocd-agent` topologies, we decided for one upstream vanilla Argo CD per cluster, installed once by the bootstrap and then managed by an Argo CD `Application` that points at `gitops/clusters/<name>/rendered/argocd/` (Argo CD manages itself and the other components; a cluster can opt some components out), and against a hub Argo CD and `argocd-agent`, to achieve clusters that sync and recover alone, accepting one UI and one set of credentials per cluster.
+- Context: choosing a GitOps topology for a few clusters, facing the choice between per-cluster, hub and `argocd-agent` topologies.
+- Decision: we decided for one upstream vanilla Argo CD per cluster, installed once by the bootstrap and then managed by an Argo CD `Application` that points at `gitops/clusters/<name>/rendered/argocd/` (Argo CD manages itself and the other components; a cluster can opt some components out), and against a hub Argo CD and `argocd-agent`, to achieve clusters that sync and recover alone, accepting one UI and one set of credentials per cluster.
 - Consequences:
   - Good: losing one cluster does not stop syncs on another; no cross-cluster credentials.
   - Good: Argo CD upgrades are ordinary pull requests to the cluster's rendered manifests.

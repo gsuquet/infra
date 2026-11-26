@@ -21,6 +21,11 @@ superseded-by: null
 Each tenant application keeps its code in its own repository. Rendered tenant manifests per cluster live in the
 public repository `gsuquet/gitops`. `infra` only onboards tenants.
 
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Keep application code in its own repository and rendered tenant manifests in public `gsuquet/gitops` | Platform and release reviews stay separate | Three repositories in a first deploy | yes, revert the commit in `gsuquet/gitops`; Argo CD syncs the previous release |
+| Limit `infra` to onboarding and each tenant `AppProject` to `gsuquet/gitops` | Tenant deploys cannot change cluster-scoped resources | Onboarding is a one-time step per tenant | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) |
+
 ## Context
 
 - Applications (tenants) are developed independently of the platform.
@@ -73,7 +78,7 @@ No tenant model: applications deploy however they like.
 
 ```mermaid
 flowchart LR
-    APP["app repository: code, chart or Kustomize sources"] -->|"rendered"| G["gsuquet/gitops: tenants/{tenant}/{cluster}/"]
+    APP["app repository: code, chart, Kustomize"] -->|"rendered"| G["gsuquet/gitops: tenants/{tenant}/{cluster}/"]
     I["infra: onboarding"] -->|"Application + AppProject"| A["Argo CD on the cluster"]
     A -->|"sourceRepos: gsuquet/gitops only"| G
 ```
@@ -98,8 +103,10 @@ Three repositories: the app produces, `gsuquet/gitops` holds, `infra` authorises
 
 ## Drawbacks and risks
 
-- A first deploy involves three repositories (app, `gsuquet/gitops`, `infra` onboarding) -> onboarding is a one-time step per tenant.
-- `gsuquet/gitops` is public -> no secret values, only `ExternalSecret` references.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| `gsuquet/gitops` is public | high | no secret values, only `ExternalSecret` references. |
+| A first deploy involves three repositories (app, `gsuquet/gitops`, `infra` onboarding) | low | onboarding is a one-time step per tenant. |
 
 ## Open questions
 
@@ -108,7 +115,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of tenant applications developed independently of the platform, facing shared review queues and tenant access to cluster-scoped resources, we decided for application code in its own repositories and rendered tenant manifests in the public repository `gsuquet/gitops` under `tenants/<tenant>/<cluster>/` (no secret value, only `ExternalSecret` references), with `infra` only onboarding tenants and restricting each tenant `AppProject` to `gsuquet/gitops`, and against tenant manifests inside `infra` and manifests in each app repository, to achieve separate review queues and one view of every tenant per cluster, accepting three repositories in a first deploy.
+- Context: tenant applications developed independently of the platform, facing shared review queues and tenant access to cluster-scoped resources.
+- Decision: we decided for application code in its own repositories and rendered tenant manifests in the public repository `gsuquet/gitops` under `tenants/<tenant>/<cluster>/` (no secret value, only `ExternalSecret` references), with `infra` only onboarding tenants and restricting each tenant `AppProject` to `gsuquet/gitops`, and against tenant manifests inside `infra` and manifests in each app repository, to achieve separate review queues and one view of every tenant per cluster, accepting three repositories in a first deploy.
 - Consequences:
   - Good: the platform repository does not change on every release.
   - Good: one place lists what every tenant runs on every cluster.

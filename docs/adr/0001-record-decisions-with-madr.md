@@ -10,7 +10,8 @@ review: https://github.com/gsuquet/infra/pull/18
 # 0001. Record decisions as RFCs with generated ADRs
 
 - Status: accepted on 2026-11-19 by gsuquet
-- Decision: In the context of recording the structural decisions of `infra`, facing hand-written MADR prose that mixes debate and outcome and has no review state, we decided for one RFC per decision in `docs/rfc/NNNN-slug.md` (lifecycle draft, review, accepted, rejected, withdrawn, superseded; reviewed in a pull request) whose accepted Decision section is copied verbatim into a generated ADR `docs/adr/NNNN-slug.md` with the same number, and against hand-written MADR, explanation pages and decisions kept only in pull request descriptions, to achieve a reviewed human record and a compact ADR that agents read, accepting two files per decision and a heavier template.
+- Context: recording the structural decisions of `infra`, facing hand-written MADR prose that mixes debate and outcome and has no review state.
+- Decision: we decided for one RFC per decision in `docs/rfc/NNNN-slug.md` (lifecycle draft, review, accepted, rejected, withdrawn, superseded; reviewed in a pull request) whose accepted Decision section is copied verbatim into a generated ADR `docs/adr/NNNN-slug.md` with the same number, and against hand-written MADR, explanation pages and decisions kept only in pull request descriptions, to achieve a reviewed human record and a compact ADR that agents read, accepting two files per decision and a heavier template.
 - Consequences:
   - Good: an ADR holds only the Decision block, the cheapest form for agents to read.
   - Good: each decision has a stable link, a status and its review pull request in front matter.

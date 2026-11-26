@@ -21,6 +21,11 @@ superseded-by: null
 Every namespace gets a namespaced External Secrets `SecretStore` named `secrets`, rendered by the platform. Every
 consumer references that store, so the backend can change without touching consumers.
 
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Read every secret through a namespaced `SecretStore` named `secrets`, rendered by the platform | The backend can change without touching consumers | One indirection, and one backend credential or identity binding per namespace | yes, revert the store change; existing `Secret` objects stay until ESO refreshes them |
+| Use an in-cluster backend with dummy values on kind | kind must work without any real credential | open: the in-cluster provider (ESO `fake` or `kubernetes`) | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) |
+
 ## Context
 
 - The secrets backend (cloud secret manager, password manager, in-cluster vault, ...) is still under study
@@ -76,7 +81,7 @@ Secrets created by hand in each cluster.
 
 ```mermaid
 flowchart LR
-    ES["ExternalSecret: secretStoreRef kind SecretStore, name secrets"] --> SS["SecretStore secrets (per namespace, rendered by the platform)"]
+    ES["ExternalSecret: secretStoreRef kind SecretStore, name secrets"] --> SS["SecretStore secrets, per namespace, platform-rendered"]
     SS --> BE["backend: RFC 0020"]
     SS -.->|"kind"| KINDSTORE["in-cluster provider with dummy values"]
     SS --> S["Kubernetes Secret"]
@@ -104,9 +109,11 @@ Consumers see one name; only the rendered store knows the backend.
 
 ## Drawbacks and risks
 
-- All consumers get the same interface, even where a backend offers richer features -> accepted for portability.
-- One store per namespace means one backend credential or identity binding per namespace -> rendered by the platform.
-- A tenant could ship its own `SecretStore` named `secrets` and fight the platform one -> adding `SecretStore` to the tenant `namespaceResourceBlacklist` waits for the owner's decision (RFC 0009).
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| A tenant could ship its own `SecretStore` named `secrets` and fight the platform one | high | adding `SecretStore` to the tenant `namespaceResourceBlacklist` waits for the owner's decision (RFC 0009). |
+| One store per namespace means one backend credential or identity binding per namespace | medium | rendered by the platform. |
+| All consumers get the same interface, even where a backend offers richer features | low | accepted for portability. |
 
 ## Open questions
 
@@ -115,7 +122,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of platform components and tenants that need secrets before the backend is chosen, facing public repositories and kind clusters with no credentials, we decided for the External Secrets Operator with a namespaced `SecretStore` named `secrets` in every namespace, rendered by the platform (tenant namespaces through onboarding), never a `ClusterSecretStore`, with every `ExternalSecret` setting `secretStoreRef: {kind: SecretStore, name: secrets}` and kind using an in-cluster backend with dummy values, and against backend-specific store names and SOPS-encrypted secrets in Git, to achieve consumers that never change when the backend changes, accepting one indirection and one backend credential or identity binding per namespace.
+- Context: platform components and tenants that need secrets before the backend is chosen, facing public repositories and kind clusters with no credentials.
+- Decision: we decided for the External Secrets Operator with a namespaced `SecretStore` named `secrets` in every namespace, rendered by the platform (tenant namespaces through onboarding), never a `ClusterSecretStore`, with every `ExternalSecret` setting `secretStoreRef: {kind: SecretStore, name: secrets}` and kind using an in-cluster backend with dummy values, and against backend-specific store names and SOPS-encrypted secrets in Git, to achieve consumers that never change when the backend changes, accepting one indirection and one backend credential or identity binding per namespace.
 - Consequences:
   - Good: changing the backend changes only the rendered stores, not consumers.
   - Good: kind runs the full catalog with no credentials.

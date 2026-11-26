@@ -21,6 +21,11 @@ superseded-by: null
 `infra` has four top-level areas: `landing-zone/` for account foundations, `modules/` for every child module,
 `clusters/` for one IaC root per cluster, and `gitops/` for the catalog, cluster files and tenants.
 
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Organise `infra` in `landing-zone/`, `modules/`, `clusters/` and `gitops/` | Each new file needs one obvious place | A module used by one root lives away from it | yes, move the folders back; no state changes when a child module moves within the same root's calls |
+| Name a cluster the same in `clusters/<name>/` and `gitops/clusters/<name>/` | All files of one cluster are found by its name | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) |
+
 ## Context
 
 - `infra` holds IaC for account-level foundations, IaC for clusters, and GitOps sources.
@@ -101,7 +106,9 @@ Roots call child modules in `modules/`; a cluster's two folders share its name.
 
 ## Drawbacks and risks
 
-- A module used by one root still lives away from it -> accepted: reuse by any root outweighs locality.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| A module used by one root still lives away from it | low | accepted: reuse by any root outweighs locality. |
 
 ## Open questions
 
@@ -110,7 +117,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of one repository holding account foundations, cluster IaC and GitOps sources, facing files with no obvious place, we decided for four top-level areas: `landing-zone/{cloudflare,gcp}/` (account foundation roots), `modules/` (every child module: `cluster-*`, `bootstrap-*`, `cloudflare-domain`, ...), `clusters/<name>/` (one IaC root per cluster) and `gitops/` (`components/<name>/`, `clusters/<name>/` with `cluster.yaml` and `rendered/`, `tenants/<tenant>.yaml`), with a cluster named the same in `clusters/<name>/` and `gitops/clusters/<name>/`, and against child modules nested in their root and one root for everything, to achieve one obvious place per file and reusable child modules, accepting that a module used by one root lives away from it.
+- Context: one repository holding account foundations, cluster IaC and GitOps sources, facing files with no obvious place.
+- Decision: we decided for four top-level areas: `landing-zone/{cloudflare,gcp}/` (account foundation roots), `modules/` (every child module: `cluster-*`, `bootstrap-*`, `cloudflare-domain`, ...), `clusters/<name>/` (one IaC root per cluster) and `gitops/` (`components/<name>/`, `clusters/<name>/` with `cluster.yaml` and `rendered/`, `tenants/<tenant>.yaml`), with a cluster named the same in `clusters/<name>/` and `gitops/clusters/<name>/`, and against child modules nested in their root and one root for everything, to achieve one obvious place per file and reusable child modules, accepting that a module used by one root lives away from it.
 - Consequences:
   - Good: removing a cluster removes two folders with the same name.
   - Good: every child module is reusable by any root.

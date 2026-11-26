@@ -16,10 +16,17 @@ superseded-by: null
 
 # RFC 0011: Use Cilium on kind and Talos, Dataplane V2 on GKE
 
+<!-- readability: allow-code V2 -->
+
 ## Summary
 
 kind and Talos clusters run Cilium with kube-proxy replacement, installed by the bootstrap. GKE clusters run GKE
 Dataplane V2, its managed Cilium, and the catalog skips `cilium` there.
+
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Run Cilium with kube-proxy replacement on kind and Talos, installed by IaC before Argo CD | Local tests match the hardware clusters | Nodes stay `NotReady` until Cilium runs | no, changing CNI on a running cluster needs a rebuild and downtime |
+| Run Dataplane V2 on GKE and skip `cilium` there | No CNI to operate in the cloud | Two dataplanes to reason about | no, changing CNI on a running cluster needs a rebuild and downtime |
 
 ## Context
 
@@ -74,7 +81,7 @@ Same as distribution defaults: the cluster comes up with its default CNI.
 ```mermaid
 flowchart LR
     K["kind: default CNI and kube-proxy disabled"] --> C["Cilium, kubeProxyReplacement=true, installed by bootstrap-cilium"]
-    T["Talos: Flannel and kube-proxy disabled, KubePrism localhost:7445"] --> C
+    T["Talos: Flannel and kube-proxy disabled"] --> C
     G["GKE: Dataplane V2 at creation"] --> D["managed Cilium, catalog skips cilium"]
 ```
 
@@ -100,9 +107,11 @@ Two dataplanes: Cilium where the repository installs it, Dataplane V2 where Goog
 
 ## Drawbacks and risks
 
-- A Talos or kind node stays `NotReady` until Cilium runs -> Cilium is installed by IaC before Argo CD (RFC 0015).
-- Dataplane V2 is a managed Cilium with a restricted feature set: Cilium-specific features, possibly `CiliumClusterwideNetworkPolicy` (RFC 0010), may differ on GKE; not verified -> checked in RFC 0024.
-- The Talos machine config patch differs by Talos version -> the `cluster-talos` module handles both forms.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| A Talos or kind node stays `NotReady` until Cilium runs | medium | Cilium is installed by IaC before Argo CD (RFC 0015). |
+| Dataplane V2 is a managed Cilium with a restricted feature set: Cilium-specific features, possibly `CiliumClusterwideNetworkPolicy` (RFC 0010), may differ on GKE; not verified | medium | checked in RFC 0024. |
+| The Talos machine config patch differs by Talos version | low | the `cluster-talos` module handles both forms. |
 
 ## Open questions
 
@@ -111,7 +120,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of choosing a CNI per target for the network policy model and Gateway API, facing different default CNIs per distribution, we decided for Cilium with `kubeProxyReplacement=true` on kind (default CNI and kube-proxy disabled in the kind config) and Talos (Flannel and kube-proxy disabled in the machine config: `cluster.network.cni.name: none` and `cluster.proxy.disabled: true` before Talos 1.14, separate config documents from 1.14; API server at KubePrism `localhost:7445`; Talos cgroup settings), installed by IaC before Argo CD, and for GKE Dataplane V2 enabled at creation with `cilium` skipped on GKE, and against a self-installed Cilium on GKE and the distribution default CNIs, to achieve the same dataplane on kind and Talos and no CNI to operate in the cloud, accepting two dataplanes to reason about.
+- Context: choosing a CNI per target for the network policy model and Gateway API, facing different default CNIs per distribution.
+- Decision: we decided for Cilium with `kubeProxyReplacement=true` on kind (default CNI and kube-proxy disabled in the kind config) and Talos (Flannel and kube-proxy disabled in the machine config: `cluster.network.cni.name: none` and `cluster.proxy.disabled: true` before Talos 1.14, separate config documents from 1.14; API server at KubePrism `localhost:7445`; Talos cgroup settings), installed by IaC before Argo CD, and for GKE Dataplane V2 enabled at creation with `cilium` skipped on GKE, and against a self-installed Cilium on GKE and the distribution default CNIs, to achieve the same dataplane on kind and Talos and no CNI to operate in the cloud, accepting two dataplanes to reason about.
 - Consequences:
   - Good: kind reproduces the Talos dataplane.
   - Good: GKE needs no CNI upgrades from this repository.

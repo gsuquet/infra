@@ -21,6 +21,11 @@ superseded-by: null
 Every cluster runs a small fixed set of catalog components; everything else is opt-in in `cluster.yaml`. Amended on
 2026-11-19: `network-policy` joins the baseline on every cluster, GKE included.
 
+| Decision | Why | Cost | Reversible |
+| --- | --- | --- | --- |
+| Install `argocd`, `cert-manager`, `external-secrets` and `network-policy` on every cluster, GKE included, and `gateway-api-crds` and `cilium` except on GKE | Other components and tenants rely on baseline APIs and default deny | The list is a rule the render or a schema must enforce | yes, revert the component version; a baseline component cannot be removed from a cluster |
+| Make every other component opt-in in `cluster.yaml` | Small clusters run only what they need | A cluster serves no route until it enables a Gateway implementation | not stated, see the [open point](https://github.com/gsuquet/infra/pull/18) |
+
 ## Context
 
 - The catalog (RFC 0006) can hold many components.
@@ -110,8 +115,10 @@ layer, not a catalog component (RFC 0010); unresolved, since the render on `main
 
 ## Drawbacks and risks
 
-- A Gateway implementation is opt-in: a cluster with Gateway API CRDs and no implementation serves no route -> enable one per cluster that serves traffic.
-- The baseline list is a rule the render or a schema must enforce -> schema or render check.
+| Risk | Severity (proposed) | Mitigation |
+| --- | --- | --- |
+| A Gateway implementation is opt-in: a cluster with Gateway API CRDs and no implementation serves no route | medium | enable one per cluster that serves traffic. |
+| The baseline list is a rule the render or a schema must enforce | medium | schema or render check. |
 
 ## Open questions
 
@@ -120,7 +127,8 @@ None.
 ## Decision
 
 - Status: accepted on 2026-11-18 by gsuquet
-- Decision: In the context of a component catalog shared by clusters of very different sizes, facing tenants that need guaranteed APIs and Raspberry Pis that need a small footprint, we decided for a small fixed baseline on every cluster: `argocd`, `cert-manager`, `external-secrets` and `network-policy` everywhere, GKE included, plus `gateway-api-crds` and `cilium` everywhere except GKE (GKE owns its Gateway API CRDs and dataplane), with every other component (Gateway implementation, `cloudflared`, Kargo, observability, storage, ...) opt-in in `cluster.yaml`, and against a large baseline and no baseline, to achieve APIs and default deny that platform and tenant manifests can always assume, accepting that a cluster serves no route until it enables a Gateway implementation.
+- Context: a component catalog shared by clusters of very different sizes, facing tenants that need guaranteed APIs and Raspberry Pis that need a small footprint.
+- Decision: we decided for a small fixed baseline on every cluster: `argocd`, `cert-manager`, `external-secrets` and `network-policy` everywhere, GKE included, plus `gateway-api-crds` and `cilium` everywhere except GKE (GKE owns its Gateway API CRDs and dataplane), with every other component (Gateway implementation, `cloudflared`, Kargo, observability, storage, ...) opt-in in `cluster.yaml`, and against a large baseline and no baseline, to achieve APIs and default deny that platform and tenant manifests can always assume, accepting that a cluster serves no route until it enables a Gateway implementation.
 - Consequences:
   - Good: platform and tenant manifests can always assume `Gateway` CRDs, `Certificate`, `ExternalSecret`, the `secrets` store and default deny.
   - Good: small clusters stay small.
@@ -142,4 +150,4 @@ N/A: no external reference.
 
 ## Future work
 
-N/A: no follow-up raised.
+- Settle where tenant onboarding and platform `Namespace` manifests render (owner decision).
