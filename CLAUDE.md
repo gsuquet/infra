@@ -16,8 +16,8 @@ Read [`README.md`](README.md) before structural changes.
 ## Tasks
 
 * `mise install`: pinned tools (`.mise/config.toml` + `.mise/mise.lock`).
-* `pre-commit run --all-files`: static checks. CI (`.github/workflows/checks.yml`) runs them and the GitOps
-  tasks on every pull request.
+* `pre-commit run --all-files`: static checks. CI (`.github/workflows/checks.yml`) runs them on pull requests
+  only, and the GitOps tasks on every pull request and push to main.
 * `mise run manifests:render|check`; `mise run cluster:up|plan|down <name>` is planned.
 
 ## Rules for agents

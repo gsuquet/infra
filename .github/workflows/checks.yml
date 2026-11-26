@@ -23,6 +23,9 @@ concurrency:
 jobs:
   pre-commit:
     name: Pre-commit hooks
+    # Pull requests only: the hooks already gate every change before merge.
+    # Native CI checks will replace this job.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
