@@ -63,7 +63,9 @@ check_root() {
   local catalog="$root/components" platform_namespaces
   # Namespaces of the catalog components, one per line: a tenant must not
   # take one, its AppProject would deploy into the platform.
-  platform_namespaces="$(for file in "$catalog"/*/component.yaml; do [ -f "$file" ] && yq '.namespace' "$file"; done)"
+  # if/fi, not `[ -f ] && yq`: with an empty catalog the loop would end on a
+  # failed test, and set -e would stop the task on this assignment.
+  platform_namespaces="$(for file in "$catalog"/*/component.yaml; do if [ -f "$file" ]; then yq '.namespace' "$file"; fi; done)"
 
   # Catalog components.
   for file in "$catalog"/*/component.yaml; do
