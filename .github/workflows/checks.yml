@@ -13,8 +13,11 @@ on:
 permissions: {}
 
 concurrency:
-  group: checks-${{ github.ref }}
-  # Pull requests only: every main commit gets a full run.
+  # Pull requests: one group per PR, superseded runs cancelled.
+  # Main: one group per commit, so every commit gets a full run.
+  group: >-
+    checks-${{ github.event_name == 'pull_request'
+    && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
