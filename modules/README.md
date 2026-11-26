@@ -13,6 +13,5 @@ the root modules in [`landing-zone/`](../landing-zone/) and [`clusters/`](../clu
 | `bootstrap-cilium` | Cilium from `rendered/cilium/` (not on GKE) | planned |
 | `bootstrap-argocd` | Argo CD and its root Application from `rendered/argocd/` | planned |
 
-Bootstrap modules apply the rendered manifests once; Argo CD then adopts them
-([ADR-0015](../docs/adr/0015-bootstrap-boundary.md)). Files follow the HashiCorp standard module structure, with
-the `terraform` block in `terraform.tf`.
+Bootstrap modules apply the rendered manifests once; Argo CD then adopts them. Files follow the HashiCorp standard
+module structure, with the `terraform` block in `terraform.tf`.
