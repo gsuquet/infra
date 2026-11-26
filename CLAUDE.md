@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Terraform and GitOps for the platform: kind, Talos and GKE clusters, plus the Cloudflare account.
-Read [`README.md`](README.md) and the decisions in [`docs/adr/`](docs/adr/README.md) before structural changes.
+Read [`README.md`](README.md) before structural changes.
 
 ## Layout
 
@@ -16,9 +16,9 @@ Read [`README.md`](README.md) and the decisions in [`docs/adr/`](docs/adr/README
 ## Tasks
 
 * `mise install`: pinned tools (`.mise/config.toml` + `.mise/mise.lock`).
-* `pre-commit run --all-files`: static checks. No CI workflow exists yet (planned, ADR-0019): nothing gates a
-  pull request but these local hooks.
-* `mise run manifests:render|check` and `mise run cluster:up|plan|down <name>` (planned, ADR-0019).
+* `pre-commit run --all-files`: static checks. CI (`.github/workflows/checks.yml`) runs them and the GitOps
+  tasks on every pull request.
+* `mise run manifests:render|check`; `mise run cluster:up|plan|down <name>` is planned.
 
 ## Rules for agents
 
@@ -33,4 +33,4 @@ Read [`README.md`](README.md) and the decisions in [`docs/adr/`](docs/adr/README
 * Pin every tool in mise (with lockfile) and every GitHub Action and pre-commit hook by commit SHA with a version
   comment.
 * Conventional commits; pre-commit hooks must pass, never `--no-verify`.
-* New structural decision: add an ADR (next free number; 0020 is reserved for the secrets backend).
+* Work is tracked as GitHub issues.
