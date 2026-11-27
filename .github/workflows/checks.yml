@@ -1,5 +1,5 @@
 ---
-# Static checks of every pull request and push to main. OpenTofu plan stays
+# Static checks of every pull request and push to main. Terraform plan stays
 # local, and the kind end-to-end job is deferred. Tools come from
 # .mise/config.toml and .mise/mise.lock, the same versions as on a laptop.
 name: Checks
