@@ -31,10 +31,7 @@ clusters/<name>/           one Terraform root per cluster
 gitops/components/<name>/  component catalog: Helm source and default values
 gitops/clusters/<name>/    cluster.yaml and rendered/<component>/
 gitops/tenants/            one file per tenant
-docs/reference/            tooling reference (gitops-tooling.md)
 ```
-
-Each folder has a README.
 
 ## Usage
 
