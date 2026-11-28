@@ -20,7 +20,7 @@ No secret value is created by a resource of this configuration: such values woul
 ## Usage
 
 Credentials live in Proton Pass. `pass/*.env` hold only `pass://<vault>/<item>/<field>` references, which
-`pass-cli run` resolves into the environment of the OpenTofu process alone, masking them in its output.
+`pass-cli run` resolves into the environment of the Terraform process alone, masking them in its output.
 
 | Pass item (vault `Personal`) | Fields |
 |---|---|
@@ -43,8 +43,8 @@ before the `cloudflare-infra-r2-state` item exists (hence `pass-cli run` without
 
 ```sh
 printf 'terraform {\n  backend "local" {}\n}\n' > bootstrap_override.tf   # gitignored
-pass-cli run --env-file pass/write.env -- tofu init
-pass-cli run --env-file pass/write.env -- tofu apply   # creates the state bucket, imports existing resources
+pass-cli run --env-file pass/write.env -- terraform init
+pass-cli run --env-file pass/write.env -- terraform apply   # creates the state bucket, imports existing resources
 rm bootstrap_override.tf
 # Create an R2 API token scoped to the bucket in the dashboard, store it as cloudflare-infra-r2-state
 mise run tf init -migrate-state       # copies local state into R2

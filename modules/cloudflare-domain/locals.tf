@@ -1,15 +1,9 @@
 locals {
-  # Baseline applied to every zone; var.zone_settings overrides per domain.
-  zone_settings = merge(
-    {
-      ssl                      = "strict"
-      always_use_https         = "on"
-      min_tls_version          = "1.2"
-      tls_1_3                  = "on"
-      automatic_https_rewrites = "on"
-    },
-    var.zone_settings
-  )
+  caa_records = merge([
+    for issuer in var.caa_issuers : {
+      for tag in ["issue", "issuewild"] : "${tag}_${issuer}" => { tag = tag, issuer = issuer }
+    }
+  ]...)
 
   mail_records = var.proton == null ? {} : merge(
     {
@@ -28,9 +22,14 @@ locals {
     }
   )
 
-  caa_records = merge([
-    for issuer in var.caa_issuers : {
-      for tag in ["issue", "issuewild"] : "${tag}_${issuer}" => { tag = tag, issuer = issuer }
-    }
-  ]...)
+  zone_settings = merge(
+    {
+      ssl                      = "strict"
+      always_use_https         = "on"
+      min_tls_version          = "1.2"
+      tls_1_3                  = "on"
+      automatic_https_rewrites = "on"
+    },
+    var.zone_settings
+  )
 }
