@@ -221,3 +221,6 @@ terragrunt-debug.tfvars.json
 # from manifests:check.
 !**/rendered/
 !**/rendered/**
+
+# Kubeconfig files the kind cluster roots write.
+**/clusters/*/kubeconfig
