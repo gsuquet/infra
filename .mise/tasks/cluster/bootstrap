@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+#MISE description="Hand a new cluster over to Argo CD: apply its rendered gateway-api, cilium and argo-cd once, then the root Application"
+#MISE dir="{{config_root}}"
+#USAGE arg "<cluster>" help="Cluster name: clusters/<cluster>/ and gitops/clusters/<cluster>/"
+#USAGE flag "--force" help="Run on a cluster that is already bootstrapped: the recovery of a broken Argo CD"
+#USAGE flag "--allow-unmerged" help="Skip the check that HEAD is origin/main with committed rendered files (throwaway clusters)"
+# A one-time procedure, not infrastructure: Terraform creates the cluster and
+# keeps no in-cluster object in its state. For each of gateway-api, cilium and
+# argo-cd the cluster enables, in this order:
+#   1. Namespaces and CRDs, then wait until the CRDs are Established;
+#   2. everything else, then wait for its workloads and for the nodes to be
+#      Ready (Cilium brings them up).
+# Then from argo-cd-apps the AppProjects, and only the root Application: Argo
+# CD creates the other Applications itself, in the order of their waves.
+#
+# Every apply is server-side as argocd-controller, Argo CD's own field
+# manager: with any other manager, a field later removed from Git would stay
+# in the cluster with a Synced status (argocd-adopt experiment). Argo CD then
+# adopts the same files with no diff. Helm hooks (the argocd-redis secret Job)
+# run once here as plain objects, then as PreSync hooks in Argo CD.
+set -euo pipefail
+
+# shellcheck source=SCRIPTDIR/../_lib/gitops.sh
+source .mise/tasks/_lib/gitops.sh
+# shellcheck source=SCRIPTDIR/_lib.sh
+source .mise/tasks/cluster/_lib.sh
+
+require kubectl yq git terraform
+
+cluster="${usage_cluster:?}"
+TIMEOUT="${TIMEOUT:-5m}"
+cluster_file="$(cluster_file "$cluster")"
+rendered="gitops/clusters/$cluster/rendered"
+KUBECONFIG="$(cluster_kubeconfig "$cluster")"
+export KUBECONFIG ROOT_APPLICATION
+
+enabled() { COMPONENT="$1" yq -e '.components[] | select(.name == strenv(COMPONENT))' "$cluster_file" > /dev/null 2>&1; }
+for component in argo-cd argo-cd-apps; do
+  enabled "$component" || {
+    log_error "$cluster_file must enable $component"
+    exit 1
+  }
+done
+# The order matters: CRDs, then the CNI the pods need, then Argo CD.
+components=()
+for component in gateway-api cilium argo-cd; do
+  enabled "$component" && components+=("$component")
+done
+
+if bootstrapped && [ "${usage_force:-false}" != "true" ]; then
+  log_error "$cluster is already bootstrapped (Application $ROOT_APPLICATION exists). Argo CD owns it: use --force only to recover a broken Argo CD."
+  exit 1
+fi
+
+# The files applied here are adopted next by Argo CD, which syncs origin/main:
+# a feature branch or a local render would be applied, then reverted.
+if [ "${usage_allow_unmerged:-false}" != "true" ]; then
+  git fetch --quiet origin main
+  [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] \
+    || {
+      log_error "HEAD is not origin/main: check out main and pull"
+      exit 1
+    }
+  [ -z "$(git status --porcelain -- "$rendered")" ] \
+    || {
+      log_error "$rendered has uncommitted changes"
+      exit 1
+    }
+fi
+
+# apply <yq selection> <files...>: server-side apply of the selected documents.
+# Returns 1 when the selection is empty, so callers can skip the waits. yq e,
+# not ea: ea evaluates the expression over all documents at once.
+apply() {
+  local selection="$1" documents
+  shift
+  documents="$(yq e "select($selection)" "$@")"
+  [ -n "$documents" ] || return 1
+  printf '%s\n' "$documents" \
+    | kubectl apply --server-side --field-manager=argocd-controller --force-conflicts -f -
+}
+
+foundation='.kind == "Namespace" or .kind == "CustomResourceDefinition"'
+for component in "${components[@]}"; do
+  files=("$rendered/$component"/*.yaml)
+  [ -e "${files[0]}" ] || {
+    log_error "$rendered/$component is empty: run mise run manifests:render"
+    exit 1
+  }
+  log_info "$component"
+
+  if apply "$foundation" "${files[@]}"; then
+    for crd in $(yq e -N 'select(.kind == "CustomResourceDefinition") | .metadata.name' "${files[@]}"); do
+      kubectl wait --for=condition=Established --timeout="$TIMEOUT" "crd/$crd"
+    done
+  fi
+
+  apply "($foundation) | not" "${files[@]}" || continue
+
+  workloads="$(yq e -N 'select(.kind == "Deployment" or .kind == "StatefulSet" or .kind == "DaemonSet") | (.kind | downcase) + "/" + .metadata.name + " " + (.metadata.namespace // "default")' "${files[@]}")"
+  [ -n "$workloads" ] || continue
+  while read -r workload namespace; do
+    kubectl rollout status --namespace "$namespace" --timeout="$TIMEOUT" "$workload"
+  done <<< "$workloads"
+  kubectl wait --for=condition=Ready --timeout="$TIMEOUT" nodes --all
+done
+
+apps=("$rendered/argo-cd-apps"/*.yaml)
+[ -n "$(yq e -N 'select(.kind == "Application" and .metadata.name == strenv(ROOT_APPLICATION)) | .metadata.name' "${apps[@]}")" ] \
+  || {
+    log_error "argo-cd-apps renders no Application named $ROOT_APPLICATION"
+    exit 1
+  }
+log_info "argo-cd-apps: AppProjects, then the root Application $ROOT_APPLICATION"
+# The AppProjects first: an Application seen before its project gets the
+# condition "project does not exist" until the next reconciliation.
+apply '.kind != "Application"' "${apps[@]}" || true
+apply '.kind == "Application" and .metadata.name == strenv(ROOT_APPLICATION)' "${apps[@]}"
+log_info "$cluster bootstrapped: Argo CD now owns it"

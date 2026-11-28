@@ -9,8 +9,9 @@ k3s cluster until a Talos cluster from this repository replaces it.
 ## Platform
 
 * **Clusters**: kind, Talos (`siderolabs/talos` provider, no Ansible) and GKE, each created by Terraform.
-* **Bootstrap**: Terraform installs only the cluster, the Gateway API CRDs, Cilium and Argo CD; Argo CD adopts
-  them and installs everything else.
+* **Bootstrap**: Terraform creates only the cluster. `mise run cluster:bootstrap` then applies the rendered
+  Gateway API CRDs, Cilium and Argo CD once, as Argo CD's field manager, with the root Application of
+  `argo-cd-apps`. Argo CD adopts them and installs everything else.
 * **GitOps**: one vanilla, self-managed Argo CD per cluster, applying committed, rendered manifests with sync
   waves.
 * **Catalog**: components in `gitops/components/`, enabled per cluster in `cluster.yaml`. Baseline:
@@ -50,8 +51,11 @@ credentials and the first-apply bootstrap are described in
 
 `pre-commit run --all-files` runs the static checks. CI ([`checks.yml`](.github/workflows/checks.yml)) runs them
 on pull requests only, and the GitOps tasks (`manifests:check`, kubeconform, Conftest) on every pull request and
-push to main. `mise run
-cluster:up|plan|down <name>` is planned. `terraform plan` stays local.
+push to main. `terraform plan` stays local.
+
+`mise run cluster:up <name>` creates a cluster from `clusters/<name>/` and bootstraps it once; `cluster:down <name>`
+destroys it. `cluster:bootstrap --force <name>` re-applies the bootstrap files to recover a broken Argo CD. Outside
+kind, the bootstrap only runs from `origin/main` with committed rendered files.
 
 Work is tracked as GitHub issues.
 
