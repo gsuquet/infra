@@ -1,0 +1,32 @@
+---
+# Source: argo-cd-apps/templates/applications.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-cd
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/gsuquet/infra.git
+    targetRevision: main
+    path: gitops/clusters/loc-kind-01/rendered/argo-cd
+  destination:
+    name: in-cluster
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Large CRDs exceed the client-side apply annotation limit; the
+      # argocd-adopt experiment ran with server-side apply and diff.
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

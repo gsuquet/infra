@@ -14,7 +14,8 @@ k3s cluster until a Talos cluster from this repository replaces it.
 * **GitOps**: one vanilla, self-managed Argo CD per cluster, applying committed, rendered manifests with sync
   waves.
 * **Catalog**: components in `gitops/components/`, enabled per cluster in `cluster.yaml`. Baseline:
-  `gateway-api-crds` (not GKE, which owns its CRDs), `cilium` (not GKE), `argocd`, `cert-manager`, `external-secrets`.
+  `gateway-api` (not GKE, which owns its CRDs), `cilium` (not GKE), `argo-cd`, `argo-cd-apps`, `cert-manager`,
+  `external-secrets`.
 * **Networking**: Cilium with kube-proxy replacement (GKE: Dataplane V2), Gateway API with one CRD owner,
   public exposure through Cloudflare Tunnel, cluster-wide default-deny network policy.
 * **Tenants**: application code in its own repositories, rendered tenant manifests in `gsuquet/gitops`,

@@ -1,0 +1,43 @@
+---
+# Source: argo-cd/charts/argo-cd/templates/argocd-repo-server/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    helm.sh/chart: argo-cd-10.19.1
+    app.kubernetes.io/name: argocd-repo-server
+    app.kubernetes.io/instance: argo-cd
+    app.kubernetes.io/component: repo-server
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: argocd
+    app.kubernetes.io/version: "v3.6.3"
+  name: argocd-repo-server
+  namespace: argocd
+spec:
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: argocd-server
+              app.kubernetes.io/instance: argo-cd
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: argocd-application-controller
+              app.kubernetes.io/instance: argo-cd
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: argocd-applicationset-controller
+              app.kubernetes.io/instance: argo-cd
+      ports:
+        - port: repo-server
+          protocol: TCP
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - port: metrics
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-repo-server
+      app.kubernetes.io/instance: argo-cd
+  policyTypes:
+    - Ingress

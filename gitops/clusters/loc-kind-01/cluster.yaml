@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=../../../schemas/cluster.schema.json
+---
+apiVersion: infra.gsuquet.com/v1alpha1
+kind: Cluster
+name: loc-kind-01
+target: kind
+kubernetesVersion: 1.37.0
+components:
+  - name: argo-cd
+  - name: argo-cd-apps
+tenants: []

@@ -1,0 +1,23 @@
+{{- /*
+The AppProject of the platform components: this repository only, this cluster
+only, every kind. policy/data/gitops.yaml reserves the name for the platform.
+Tenant or domain projects come later, in their own templates.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  description: Platform components of the cluster {{ .Values.gitops.cluster.name }}.
+  sourceRepos:
+    - {{ .Values.repoURL }}
+  destinations:
+    - name: in-cluster
+      server: https://kubernetes.default.svc
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"

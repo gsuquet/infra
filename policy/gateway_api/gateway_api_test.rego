@@ -15,16 +15,16 @@ file(component, obj) := [{
 }]
 
 test_gateway_api_crds_component_passes if {
-	count(gateway_api.deny) == 0 with input as file("gateway-api-crds", crd("gateway.networking.k8s.io"))
+	count(gateway_api.deny) == 0 with input as file("gateway-api", crd("gateway.networking.k8s.io"))
 }
 
 test_experimental_channel_in_owner_passes if {
-	count(gateway_api.deny) == 0 with input as file("gateway-api-crds", crd("gateway.networking.x-k8s.io"))
+	count(gateway_api.deny) == 0 with input as file("gateway-api", crd("gateway.networking.x-k8s.io"))
 }
 
 test_gateway_api_crd_from_implementation_fails if {
 	some msg in gateway_api.deny with input as file("cilium", crd("gateway.networking.k8s.io"))
-	contains(msg, "gateway-api-crds")
+	contains(msg, "gateway-api")
 }
 
 test_experimental_crd_from_implementation_fails if {

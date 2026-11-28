@@ -1,0 +1,13 @@
+---
+# Source: argo-cd/templates/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    network.infra.gsuquet.com/policy: default-deny
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    # Never delete the namespace of Argo CD itself, even when the Application
+    # that manages it is removed or pruned.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false

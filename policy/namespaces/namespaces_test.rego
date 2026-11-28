@@ -8,7 +8,7 @@ namespace(name, labels) := {"apiVersion": "v1", "kind": "Namespace", "metadata":
 
 configmap(namespace) := {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "x", "namespace": namespace}}
 
-path(file) := sprintf("gitops/clusters/kind-dev/rendered/argocd/%s", [file])
+path(file) := sprintf("gitops/clusters/kind-dev/rendered/argo-cd/%s", [file])
 
 file(obj) := [{"path": path("namespace-argocd.yaml"), "contents": obj}]
 

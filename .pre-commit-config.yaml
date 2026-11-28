@@ -88,5 +88,9 @@ repos:
         args:
           - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
       - id: terraform_trivy
+        # The hook scans the whole repository: limit it to Terraform, as the
+        # rendered manifests are covered by kubeconform and Conftest.
+        args:
+          - --args=--misconfig-scanners=terraform
       - id: terraform_validate
       - id: tfupdate
