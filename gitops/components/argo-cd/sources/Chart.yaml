@@ -1,0 +1,13 @@
+---
+# Umbrella chart over the upstream argo-cd chart. The bootstrap applies the
+# rendered output once; the argo-cd Application of argo-cd-apps then syncs the
+# same files, so Argo CD upgrades are pull requests to this chart.
+apiVersion: v2
+name: argo-cd
+description: Argo CD, self-managed from the cluster's rendered manifests.
+type: application
+version: 0.1.0
+dependencies:
+  - name: argo-cd
+    version: 10.19.1
+    repository: https://argoproj.github.io/argo-helm

@@ -1,0 +1,43 @@
+{{- /*
+One Application per component enabled in cluster.yaml, this one included: the
+argo-cd-apps Application is the root, the only one the Terraform bootstrap
+applies. Argo CD then creates the others from it.
+
+No resources-finalizer: deleting an Application (a component removed from
+cluster.yaml) orphans its resources instead of deleting them. Removing a
+platform component stays an explicit step.
+*/ -}}
+{{- $cluster := .Values.gitops.cluster }}
+{{- range $component := $cluster.components }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ $component.name }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: platform
+  source:
+    repoURL: {{ $.Values.repoURL }}
+    targetRevision: {{ $.Values.targetRevision }}
+    path: {{ printf "%s/%s/rendered/%s" $.Values.clustersPath $cluster.name $component.name }}
+  destination:
+    name: in-cluster
+    namespace: {{ $component.namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Large CRDs exceed the client-side apply annotation limit; the
+      # argocd-adopt experiment ran with server-side apply and diff.
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+{{- end }}

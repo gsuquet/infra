@@ -14,7 +14,7 @@ gitops:
   # Only this component may render the Gateway API CRDs: implementations
   # (Cilium, Envoy Gateway...) are installed without their bundled copy.
   gateway_api:
-    component: gateway-api-crds
+    component: gateway-api
     groups:
       - gateway.networking.k8s.io
       - gateway.networking.x-k8s.io

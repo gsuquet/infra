@@ -1,0 +1,16 @@
+{{- /*
+The release namespace, rendered so the cluster-wide default-deny selects it
+(policy/namespaces). The bootstrap applies it before the rest; for Argo CD the
+wave keeps it first on later syncs.
+*/ -}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Namespace }}
+  labels:
+    network.infra.gsuquet.com/policy: default-deny
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    # Never delete the namespace of Argo CD itself, even when the Application
+    # that manages it is removed or pruned.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false

@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=../../../schemas/component.schema.json
+---
+apiVersion: infra.gsuquet.com/v1alpha1
+kind: Component
+name: argo-cd
+description: >-
+  Argo CD, one per cluster, installed once by the Terraform bootstrap and then
+  managing itself.
+namespace: argocd
+baseline: true
+targets:
+  - kind
+  - talos
+  - gke

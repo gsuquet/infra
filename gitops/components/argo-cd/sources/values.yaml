@@ -1,0 +1,46 @@
+---
+# Default values of the component, for every cluster. cluster.yaml overrides
+# them under components[].values.
+argo-cd:
+  # The upstream names (argocd-server, argocd-repo-server...), which the
+  # argocd CLI and the docs assume, instead of argo-cd-argocd-*.
+  fullnameOverride: argocd
+  # Non-HA: one replica per component. Clusters are small (kind, a Raspberry
+  # Pi); a cluster that needs HA overrides this in its cluster.yaml.
+  # SSO comes later: no Dex until an identity provider is chosen.
+  dex:
+    enabled: false
+  # No notifier configured yet.
+  notifications:
+    enabled: false
+  # No ApplicationSet yet: argo-cd-apps renders plain Applications.
+  applicationSet:
+    replicas: 0
+  configs:
+    cm:
+      # Explicit, though it is the Argo CD 3.x default: the argocd-adopt
+      # experiment validated adoption with annotation tracking.
+      application.resourceTrackingMethod: annotation
+      # Argo CD has no built-in health for Application since v1.8. Without it,
+      # the sync waves of argo-cd-apps would not wait for a child to be healthy.
+      # https://argo-cd.readthedocs.io/en/stable/operator-manual/health/#argocd-app
+      resource.customizations.health.argoproj.io_Application: |
+        hs = {}
+        hs.status = "Progressing"
+        hs.message = ""
+        if obj.status ~= nil and obj.status.health ~= nil then
+          hs.status = obj.status.health.status
+          if obj.status.health.message ~= nil then
+            hs.message = obj.status.health.message
+          end
+        end
+        return hs
+    params:
+      # Server-side diff, the configuration the argocd-adopt experiment ran
+      # with no OutOfSync loop. Applications sync with ServerSideApply=true.
+      controller.diff.server.side: "true"
+    # argocd-server writes server.secretkey into this Secret at start. Never
+    # prune or delete it: that would log every session out.
+    secret:
+      annotations:
+        argocd.argoproj.io/sync-options: Prune=false,Delete=false

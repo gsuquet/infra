@@ -1,0 +1,20 @@
+---
+# Source: argo-cd-apps/templates/appproject-platform.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  description: Platform components of the cluster loc-kind-01.
+  sourceRepos:
+    - https://github.com/gsuquet/infra.git
+  destinations:
+    - name: in-cluster
+      server: https://kubernetes.default.svc
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"

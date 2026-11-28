@@ -1,0 +1,9 @@
+---
+# Default values of the component. manifests:render adds gitops.cluster (name
+# and enabled components with their namespaces).
+# The repository every platform Application syncs from, and the revision.
+repoURL: https://github.com/gsuquet/infra.git
+targetRevision: main
+# Folder of the clusters in the repository:
+# <path>/<cluster>/rendered/<component>.
+clustersPath: gitops/clusters

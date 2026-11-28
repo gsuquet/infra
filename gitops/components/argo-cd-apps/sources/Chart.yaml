@@ -1,0 +1,10 @@
+---
+# No upstream dependency: the templates read gitops.cluster, which
+# manifests:render injects, and Helm cannot compute a dependency's values.
+# Kept apart from argo-cd so a child Application's sync does not re-sync Argo
+# CD itself and re-run its PreSync hook (argocd-adopt experiment, self-sync).
+apiVersion: v2
+name: argo-cd-apps
+description: Argo CD AppProjects and Applications of the cluster's components.
+type: application
+version: 0.1.0
