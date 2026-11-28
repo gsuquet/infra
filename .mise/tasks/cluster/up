@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#MISE description="Create or update a cluster with Terraform, then bootstrap it once (cluster:bootstrap)"
+#MISE dir="{{config_root}}"
+#USAGE arg "<cluster>" help="Cluster name: clusters/<cluster>/"
+#USAGE flag "--yes" help="Apply without the Terraform approval prompt"
+# Terraform credentials, for roots with a remote state, come from the
+# environment. A kind cluster bootstraps from the working tree (it is
+# throwaway); every other cluster only from origin/main.
+set -euo pipefail
+
+# shellcheck source=SCRIPTDIR/../_lib/gitops.sh
+source .mise/tasks/_lib/gitops.sh
+# shellcheck source=SCRIPTDIR/_lib.sh
+source .mise/tasks/cluster/_lib.sh
+
+require terraform kubectl yq
+
+cluster="${usage_cluster:?}"
+root="$(cluster_root "$cluster")"
+cluster_file="$(cluster_file "$cluster")"
+
+approve=()
+[ "${usage_yes:-false}" = "true" ] && approve=(-auto-approve)
+terraform -chdir="$root" init -input=false > /dev/null
+terraform -chdir="$root" apply -input=false "${approve[@]}"
+
+KUBECONFIG="$(cluster_kubeconfig "$cluster")"
+export KUBECONFIG
+if bootstrapped; then
+  log_info "$cluster is already bootstrapped: Argo CD owns its content"
+  exit 0
+fi
+
+flags=()
+[ "$(yq '.target' "$cluster_file")" = "kind" ] && flags=(--allow-unmerged)
+mise run cluster:bootstrap "${flags[@]}" "$cluster"

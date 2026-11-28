@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#MISE description="Destroy a cluster with Terraform: its state holds no in-cluster object, so nothing else to clean"
+#MISE dir="{{config_root}}"
+#USAGE arg "<cluster>" help="Cluster name: clusters/<cluster>/"
+#USAGE flag "--yes" help="Destroy without the Terraform approval prompt"
+set -euo pipefail
+
+# shellcheck source=SCRIPTDIR/../_lib/gitops.sh
+source .mise/tasks/_lib/gitops.sh
+# shellcheck source=SCRIPTDIR/_lib.sh
+source .mise/tasks/cluster/_lib.sh
+
+require terraform
+
+root="$(cluster_root "${usage_cluster:?}")"
+approve=()
+[ "${usage_yes:-false}" = "true" ] && approve=(-auto-approve)
+terraform -chdir="$root" destroy -input=false "${approve[@]}"
